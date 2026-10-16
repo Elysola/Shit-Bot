@@ -23,7 +23,7 @@ docker compose down
 ```yaml
 services:
   shit-bot:
-    image: ghcr.io/recloudstudio/shit-bot:latest
+    image: ghcr.io/elysola/shit-bot:latest
     container_name: shit-bot
     restart: unless-stopped
     ports:

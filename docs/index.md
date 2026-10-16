@@ -11,7 +11,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: GitHub
-      link: https://github.com/ReCloudStudio/shit-bot
+      link: https://github.com/Elysola/shit-bot
 
 features:
   - title: 多平台推送

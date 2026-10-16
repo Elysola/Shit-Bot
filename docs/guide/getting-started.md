@@ -8,7 +8,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/ReCloudStudio/shit-bot.git
+git clone https://github.com/Elysola/shit-bot.git
 cd shit-bot
 bun install
 ```

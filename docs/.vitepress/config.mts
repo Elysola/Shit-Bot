@@ -29,9 +29,9 @@ export default defineConfig({
         ],
       },
     ],
-    socialLinks: [{ icon: "github", link: "https://github.com/ReCloudStudio/shit-bot" }],
+    socialLinks: [{ icon: "github", link: "https://github.com/Elysola/shit-bot" }],
     editLink: {
-      pattern: "https://github.com/ReCloudStudio/shit-bot/edit/main/docs/:path",
+      pattern: "https://github.com/Elysola/shit-bot/edit/main/docs/:path",
       text: "在 GitHub 上编辑此页",
     },
   },
