@@ -2,7 +2,11 @@
   "discord": {
     "enabled": false,
     "token": "YOUR_DISCORD_BOT_TOKEN",
-    "embedColor": "#1DA1F2"
+    "embedColor": "#1DA1F2",
+    "privilegedIntents": {
+      "members": "auto",
+      "presences": "auto"
+    }
   },
   "telegram": {
     "enabled": true,
@@ -34,7 +38,7 @@
     "maxTokens": 1024,
     "temperature": 0.7,
     "allowedGuildIds": [],
-    "maxToolIterations": 8,
+    "maxToolIterations": 12,
     "reactions": true,
     "webSearch": {
       "enabled": false,
@@ -43,14 +47,114 @@
       "baseUrl": "",
       "maxResults": 5
     },
+    "persona": {
+      "dir": "data/personas",
+      "default": "memecat",
+      "guilds": {}
+    },
+    "lore": {
+      "dir": "data/lore"
+    },
+    "history": {
+      "gapFillOnStartup": true,
+      "initialDays": 30,
+      "maxMessagesPerChannel": 5000,
+      "includeThreads": true,
+      "archivedThreadDays": 30,
+      "requestIntervalMs": 350
+    },
     "memory": {
-      "enabled": false,
-      "maxProfileItems": 12,
-      "maxProfileChars": 800,
-      "recentTurns": 6,
-      "recallLimit": 8,
-      "logConversations": true,
-      "maxConversationsPerUser": 500
+      "enabled": true,
+      "observe": {
+        "enabled": true,
+        "channelDenylist": [],
+        "retentionDays": 0,
+        "crossGuildMessages": false
+      },
+      "extractor": {
+        "model": "",
+        "apiUrl": "",
+        "apiKey": "",
+        "windowMessages": 40,
+        "idleSeconds": 180,
+        "maxWaitMinutes": 30,
+        "images": true,
+        "maxImagesPerWindow": 4,
+        "concurrency": 1,
+        "dailyTokenBudget": 3000000
+      },
+      "core": {
+        "userPins": 12,
+        "guildPins": 20,
+        "selfPins": 10,
+        "autoPinImportance": 8,
+        "upcomingDays": 7
+      },
+      "context": {
+        "speakerChars": 1200,
+        "mentionedChars": 500,
+        "mentionedUsers": 3,
+        "guildChars": 1000,
+        "selfChars": 600,
+        "loreChars": 1000,
+        "recentChannelMessages": 15,
+        "recentChannelChars": 2000,
+        "autoRecall": 0
+      },
+      "tools": {
+        "maxResultChars": 30000
+      }
+    },
+    "embedding": {
+      "apiUrl": "",
+      "apiKey": "",
+      "model": "",
+      "dimensions": 0,
+      "batchSize": 32,
+      "timeoutMs": 8000,
+      "queryPrefix": "",
+      "documentPrefix": ""
+    },
+    "vector": {
+      "backend": "auto",
+      "extensionPath": "",
+      "customSqlitePath": "",
+      "exactThreshold": 3000,
+      "coarseK": 200
+    },
+    "affinity": {
+      "enabled": true,
+      "maxGainPerInteraction": 5,
+      "maxLossPerInteraction": 8,
+      "dailyGainCap": 15,
+      "dailyLossCap": 30,
+      "decay": {
+        "enabled": true,
+        "afterDays": 14,
+        "pointsPerWeek": 1
+      }
+    },
+    "mood": {
+      "enabled": true,
+      "valenceHalfLifeHours": 3,
+      "arousalHalfLifeHours": 1,
+      "maxUserImpactPerHour": 0.5
+    },
+    "proactive": {
+      "enabled": true,
+      "channels": [],
+      "denyChannels": [],
+      "threshold": 0.35,
+      "debounceSeconds": 25,
+      "forceEvalEveryMessages": 20,
+      "cooldownMinutes": 10,
+      "aliasCooldownSeconds": 60,
+      "maxPerHourPerChannel": 3,
+      "maxPerDay": 40,
+      "maxJudgeCallsPerDay": 400,
+      "quietHours": "",
+      "allowReactOnly": true,
+      "judgeModel": ""
     },
     "summary": {
       "enabled": false,

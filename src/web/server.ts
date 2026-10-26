@@ -1,7 +1,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getConfig, saveConfig, reloadConfig, getEffectiveGroups } from '../config';
+import { getConfig, saveConfig, reloadConfig, getEffectiveGroups, normalizeAiConfig, normalizePrivilegedIntents } from '../config';
 import { getRecentTweets, getSentCount } from '../storage';
 import { AppConfig, GroupConfig } from '../types';
 
@@ -46,6 +46,27 @@ function requireAuth(_req: IncomingMessage, res: http.ServerResponse): boolean {
   return false;
 }
 
+/** 掩码或空值都视为"不修改该密钥"（未提供该字段时同样保留旧值） */
+function isMaskedOrEmpty(v: unknown): boolean {
+  return v === undefined || v === null || v === '' || v === '••••••••';
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** 递归合并普通对象；数组和标量直接以 patch 为准。 */
+export function deepMerge<T>(base: T, patch: unknown): T {
+  if (!isPlainObject(base) || !isPlainObject(patch)) {
+    return (patch === undefined ? base : patch) as T;
+  }
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    out[k] = isPlainObject(v) && isPlainObject(out[k]) ? deepMerge(out[k], v) : v;
+  }
+  return out as T;
+}
+
 function sanitizeConfigForAPI(cfg: AppConfig): any {
   return {
     users: [],
@@ -64,6 +85,11 @@ function sanitizeConfigForAPI(cfg: AppConfig): any {
       ...cfg.ai,
       apiKey: cfg.ai.apiKey ? '••••••••' : '',
       webSearch: { ...cfg.ai.webSearch, apiKey: cfg.ai.webSearch?.apiKey ? '••••••••' : '' },
+      embedding: { ...cfg.ai.embedding, apiKey: cfg.ai.embedding.apiKey ? '••••••••' : '' },
+      memory: {
+        ...cfg.ai.memory,
+        extractor: { ...cfg.ai.memory.extractor, apiKey: cfg.ai.memory.extractor.apiKey ? '••••••••' : '' },
+      },
     },
     enableApproval: cfg.enableApproval,
     sendAsImage: cfg.sendAsImage,
@@ -120,7 +146,9 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
       const cfg = getConfig();
 
       if (body.discord !== undefined) {
-        cfg.discord = { ...cfg.discord, ...body.discord };
+        // privilegedIntents 是嵌套对象：只改请求里给出的那一项，另一项保持原值（否则重启后会变回 auto）
+        const intents = { ...cfg.discord.privilegedIntents, ...(body.discord.privilegedIntents ?? {}) };
+        cfg.discord = { ...cfg.discord, ...body.discord, privilegedIntents: normalizePrivilegedIntents(intents) };
         if (body.discord.token === '••••••••' || body.discord.token === '') {
           delete (body.discord as any).token;
         }
@@ -147,14 +175,17 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
       }
       if (body.ai !== undefined) {
         const prevAi = cfg.ai;
-        cfg.ai = { ...prevAi, ...body.ai };
-        if (!body.ai.apiKey || body.ai.apiKey === '••••••••') cfg.ai.apiKey = prevAi.apiKey;
-        if (body.ai.webSearch !== undefined && cfg.ai.webSearch) {
-          const incoming = body.ai.webSearch.apiKey;
-          if (!incoming || incoming === '••••••••') {
-            cfg.ai.webSearch.apiKey = prevAi.webSearch?.apiKey || '';
-          }
+        // 深合并后再规范化：只传了部分嵌套字段（如 ai.memory.extractor.model）时，其余字段与默认值都保留
+        const merged = normalizeAiConfig(deepMerge(prevAi, body.ai));
+        if (!body.ai.apiKey || body.ai.apiKey === '••••••••') merged.apiKey = prevAi.apiKey;
+        if (merged.webSearch && isMaskedOrEmpty(body.ai.webSearch?.apiKey)) {
+          merged.webSearch.apiKey = prevAi.webSearch?.apiKey || '';
         }
+        if (isMaskedOrEmpty(body.ai.embedding?.apiKey)) merged.embedding.apiKey = prevAi.embedding.apiKey;
+        if (isMaskedOrEmpty(body.ai.memory?.extractor?.apiKey)) {
+          merged.memory.extractor.apiKey = prevAi.memory.extractor.apiKey;
+        }
+        cfg.ai = merged;
       }
       if (body.enableApproval !== undefined) cfg.enableApproval = body.enableApproval;
       if (body.sendAsImage !== undefined) cfg.sendAsImage = body.sendAsImage;
