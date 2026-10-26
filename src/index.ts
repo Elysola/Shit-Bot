@@ -3,13 +3,22 @@ import * as http from 'http';
 import { loadConfig, getConfig, getEffectiveGroups } from './config';
 import { fetchAllTweets } from './rss/fetcher';
 import { filterTweets, getPassedTweets } from './filters';
-import { initDiscord, shutdownDiscord, getDiscordClient, registerDiscordCommands, initDiscordAiChat, handleMemoryCommand, handleDeleteMemoryCommand } from './bots/discord';
+import { initDiscord, shutdownDiscord, getDiscordClient, registerDiscordCommands, initDiscordAiChat } from './bots/discord';
 import { initTelegram, shutdownTelegram, getTelegramBot } from './bots/telegram';
 import { initDatabase, closeDatabase, markMultipleAsSent, cleanupOldRecords, cleanupExpiredImages, cleanupOldSentMessages, cleanupOldSentTgMessages } from './storage';
 import { sendForApproval, sendToAllGroups, handleTelegramApproval, handleDiscordApproval, setTelegramBot, setDiscordClient, handleRecallCommand, handleRecallMessageContextMenu, handleTelegramRecall, handleDiscordRecall, rehydratePendingApprovals, cleanupExpiredApprovals } from './approval';
 import { initRenderer, shutdownRenderer } from './renderer';
 import { initTwitterClient, loginWithCredentials } from './twitter';
 import { startWebServer } from './web/server';
+import { handleAiCommand } from './ai/commands';
+import { loadPersonas, stopWatchingPersonas, watchPersonas } from './ai/persona/loader';
+import { loadLore, stopWatchingLore, watchLore } from './ai/lore';
+import { registerExtraction } from './ai/memory/extract';
+import { registerProfiles } from './ai/memory/profile';
+import { startWorker, stopWorker } from './ai/worker';
+import { registerRetention } from './ai/retention';
+import { registerAffinityAndMood } from './ai/appraise';
+import { configureSqliteRuntime, initVectors, registerVectorJobs } from './ai/vector/service';
 import { Tweet } from './types';
 
 const _log = console.log.bind(console);
@@ -129,10 +138,35 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 
+  // macOS 自带 SQLite 不能加载扩展：配置了自定义 SQLite 时必须在打开数据库之前切换
+  configureSqliteRuntime();
   initDatabase();
   rehydratePendingApprovals();
 
   const config = getConfig();
+
+  if (config.ai.enabled) {
+    // 人设卡与 lorebook：启动时加载（目录为空会生成默认 memecat 人设卡），之后改动文件自动生效
+    const personaCount = loadPersonas();
+    watchPersonas();
+    const loreCount = loadLore();
+    watchLore();
+    console.log(`[Persona] 已加载 ${personaCount} 张人设卡；[Lore] 已加载 ${loreCount} 条设定集条目`);
+
+    // 后台流水线一律注册，执不执行看运行时配置（worker 只领取功能开着的任务、调度器自己检查开关），
+    // 这样启动时没开记忆、之后在 WebUI 打开也能立刻工作
+    // 记忆：窗口抽取、画像 / 统计 / 反思（任务在 jobs 表里，重启不丢）
+    registerExtraction();
+    registerProfiles();
+    // 好感与情绪：每次互动后的评估、长期未互动回落、旁听好感与群聊气氛
+    registerAffinityAndMood();
+    // 向量化（配置了向量模型才启用）：自动选择 sqlite-vec 或 JS 后端，后台回填
+    await initVectors();
+    registerVectorJobs();
+    // 保留期清理；主动插话的反馈结算由 Discord 侧注册
+    registerRetention();
+    startWorker();
+  }
 
   if (config.sendAsImage) {
     console.log('正在初始化图片渲染器...');
@@ -218,10 +252,8 @@ async function start(): Promise<void> {
           if (interaction.isChatInputCommand()) {
             if (interaction.commandName === 'recall') {
               await handleRecallCommand(interaction);
-            } else if (interaction.commandName === 'memory') {
-              await handleMemoryCommand(interaction);
-            } else if (interaction.commandName === 'delete-memory') {
-              await handleDeleteMemoryCommand(interaction);
+            } else {
+              await handleAiCommand(interaction);
             }
             return;
           }
@@ -293,6 +325,9 @@ async function shutdown(): Promise<void> {
   await shutdownDiscord();
   await shutdownTelegram();
   await shutdownRenderer();
+  stopWorker();
+  stopWatchingPersonas();
+  stopWatchingLore();
   closeDatabase();
 
   console.log('关闭完成');

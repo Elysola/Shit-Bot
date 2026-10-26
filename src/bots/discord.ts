@@ -1,16 +1,41 @@
-import { Client, GatewayIntentBits, TextChannel, EmbedBuilder, AttachmentBuilder, Message, REST, Routes, ChatInputCommandInteraction, MessageFlags } from 'discord.js';
+import { Client, TextChannel, EmbedBuilder, AttachmentBuilder, Message, REST, Routes, ChatInputCommandInteraction, MessageFlags, Partials, type GuildTextBasedChannel } from 'discord.js';
 import { ProcessedTweet } from '../types';
 import { getConfig } from '../config';
 import { formatContentForPlatform } from '../filters';
 import { renderTweetImage } from '../renderer';
 import { storeSentMessage, getRecentSentMessages, deleteSentMessage, getSentMessageByMessageId } from '../storage';
 import { chatWithAI, isAiEnabled } from '../ai/chat';
-import { listMemories, deleteMemory } from '../ai/memory';
-import { recordChannelMessage, getChannelMessageCount, getOldestStoredMessageId } from '../ai/summary';
 import { formatUtc8 } from '../ai/time';
+import { aiCommandDefinitions } from '../ai/commands';
+import { markBotMessage } from '../ai/channels';
+import { imageUrlsFromDiscord, isSelfRole, personFromDiscord, renderMessage } from '../ai/discord-adapter';
+import { attachIngestHandlers, backfillForTool, channelQuoteGuard, ingestLiveMessage, refreshPersonFromDiscord } from '../ai/discord-runtime';
+import { personFromDb } from '../ai/identity';
+import { ingestDelete, isGuildAllowed, withoutForgottenRendered } from '../ai/ingest';
+import { buildIntents, decidePrivilegedIntents, isDisallowedIntentsError, type PrivilegedIntents } from '../ai/intents';
+import { mentionedPeople, sanitizeOutgoingMentions, type PersonRef } from '../ai/mentions';
+import { flushPresenceSessions } from '../ai/presence';
+import { queueAppraisal } from '../ai/appraise';
+import { activePersona } from '../ai/context';
+import { sendAiText, startTyping } from './discord-send';
+import { beginDirectReply, endDirectReply, onAddressedMessage, onUnaddressedMessage, registerProactive } from './discord-proactive';
+import { forgetEpoch, forgottenAt, forgottenBefore, isForgottenMessage, recordForgottenMessage } from '../ai/forget-guard';
 
 let client: Client | null = null;
 let targetChannel: TextChannel | null = null;
+let privileged: PrivilegedIntents = { members: false, presences: false };
+
+export function getPrivilegedIntents(): PrivilegedIntents {
+  return privileged;
+}
+
+function createClient(p: PrivilegedIntents): Client {
+  return new Client({
+    intents: buildIntents(p),
+    // 编辑/删除/表情反应可能发生在未缓存的消息上，需要 partial 才能收到事件
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User, Partials.GuildMember],
+  });
+}
 
 function callWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -31,6 +56,13 @@ export function getDiscordClient(): Client | null {
   return client;
 }
 
+/** 测试用：换成一个假的客户端（不登录 Discord），之后照常调用 initDiscordAiChat() 挂上消息处理 */
+export function useDiscordClientForTesting(c: Client | null, p: PrivilegedIntents = { members: false, presences: false }): void {
+  client = c;
+  privileged = p;
+  targetChannel = null;
+}
+
 export async function initDiscord(): Promise<boolean> {
   const config = getConfig();
 
@@ -39,22 +71,40 @@ export async function initDiscord(): Promise<boolean> {
     return false;
   }
 
+  // 特权 intent 自适配：登录前读应用标志位，后台开了什么就订阅什么
+  const decision = await decidePrivilegedIntents(config.discord.token, config.discord.privilegedIntents);
+  privileged = { members: decision.members, presences: decision.presences };
+
   try {
-    client = new Client({
-      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-    });
-
+    client = createClient(privileged);
     await client.login(config.discord.token);
-
-    console.log('Discord bot 已连接 (群组指定目标频道)');
-
-    return true;
   } catch (error) {
-    console.error('Discord 初始化失败:', error);
-    client = null;
-    targetChannel = null;
-    return false;
+    if ((privileged.members || privileged.presences) && isDisallowedIntentsError(error)) {
+      // 配置强制开启、或标志位与实际不符：去掉特权 intent 再试一次，保证 bot 能上线
+      console.warn('[Intents] 申请的特权 intent 未在开发者后台开启，去掉后重新登录');
+      await client?.destroy().catch(() => {});
+      privileged = { members: false, presences: false };
+      try {
+        client = createClient(privileged);
+        await client.login(config.discord.token);
+      } catch (retryError) {
+        console.error('Discord 初始化失败:', retryError);
+        client = null;
+        targetChannel = null;
+        return false;
+      }
+    } else {
+      console.error('Discord 初始化失败:', error);
+      client = null;
+      targetChannel = null;
+      return false;
+    }
   }
+
+  console.log(
+    `Discord bot 已连接 (群组指定目标频道)；特权 intent：成员事件=${privileged.members ? '开' : '关'}，在线状态=${privileged.presences ? '开' : '关'}`
+  );
+  return true;
 }
 
 export async function sendToDiscord(tweet: ProcessedTweet, channelId?: string, asImage?: boolean, preRenderedImage?: Buffer, approvalId?: string): Promise<Message | null> {
@@ -267,22 +317,8 @@ export async function registerDiscordCommands(): Promise<void> {
         name: '撤回消息',
         type: 3,
       },
-      {
-        name: 'memory',
-        description: '查看 AI 对你的全部记忆',
-      },
-      {
-        name: 'delete-memory',
-        description: '直接删除指定 key 的记忆 (不经过 AI)',
-        options: [
-          {
-            name: 'key',
-            description: '要删除的记忆键 (可用 /memory 查看)',
-            type: 3,
-            required: true,
-          },
-        ],
-      },
+      // /memory /forget /callme /optout /optin 等 AI 命令（旧的 /delete-memory 已由 /forget 取代）
+      ...(isAiEnabled() ? aiCommandDefinitions() : []),
     ];
 
     await rest.put(
@@ -296,30 +332,12 @@ export async function registerDiscordCommands(): Promise<void> {
   }
 }
 
-export async function handleMemoryCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-  const username = interaction.user.username;
-  const mems = listMemories('discord', username);
-  if (mems.length === 0) {
-    await interaction.reply({ content: '你还没有任何记忆。', flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const lines = mems.map((m) => `key: ${m.key}，value: ${m.value}`);
-  let body = `共 ${mems.length} 条记忆：\n` + lines.join('\n');
-  if (body.length > 1900) body = body.slice(0, 1900) + '\n…（过长已截断）';
-  await interaction.reply({ content: body, flags: MessageFlags.Ephemeral });
-}
-
-export async function handleDeleteMemoryCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-  const username = interaction.user.username;
-  const key = interaction.options.getString('key', true);
-  const ok = deleteMemory('discord', username, key);
-  await interaction.reply({
-    content: ok ? `已删除记忆：${key}` : `没有找到记忆：${key}（可用 /memory 查看现有键）`,
-    flags: MessageFlags.Ephemeral,
-  });
-}
-
 export async function shutdownDiscord(): Promise<void> {
+  try {
+    flushPresenceSessions();
+  } catch {
+    // 退出途中数据库可能已不可用，忽略
+  }
   if (client) {
     await client.destroy();
     client = null;
@@ -327,6 +345,7 @@ export async function shutdownDiscord(): Promise<void> {
     console.log('Discord bot 已断开');
   }
 }
+
 
 export function initDiscordAiChat(): boolean {
   if (!client || !isAiEnabled()) {
@@ -336,211 +355,225 @@ export function initDiscordAiChat(): boolean {
     return false;
   }
 
-  client.on('messageCreate', async (message: Message) => {
-    if (message.author.bot) return;
-    if (!client?.user) return;
+  // 消息编辑/删除/表情反应/成员/在线状态的入库，以及启动和重连后的历史补全
+  attachIngestHandlers(client, privileged);
+  // 主动插话：反馈统计与定期结算
+  registerProactive();
 
-    const guildAllowed = isAiAllowedGuild(message.guildId);
-
-    if (guildAllowed && message.channel.isTextBased()) {
-      // 这是消息路径上最热的一段(每条消息都跑)：记录失败只降级告警，
-      // 绝不能让它抛出——否则会吞掉本条 @ 回复、并逃逸成未处理拒绝。
-      try {
-        const author = message.member?.displayName || message.author.username;
-        recordChannelMessage('discord', message.channelId, message.id, author, message.cleanContent, message.createdTimestamp, extractImageUrls(message));
-      } catch (e) {
-        console.warn('[AI] 记录频道消息失败(忽略):', (e as Error).message);
-      }
-    }
-
-    const botMentioned = message.mentions.has(client.user.id);
-    if (!botMentioned) return;
-
-    if (!guildAllowed) {
-      console.log(`[AI] 服务器 ${message.guildId || 'DM'} 不在 AI 允许列表中，跳过`);
-      return;
-    }
-
-    const content = message.content
-      .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
-      .trim();
-
-    let imageUrls = extractImageUrls(message);
-    const bareMention = !content && imageUrls.length === 0 && !message.reference?.messageId;
-
-    if (bareMention && !getConfig().ai.summary?.enabled) {
-      try {
-        await message.reply('你好！请 @我 然后输入你的问题，我会尽力回答。');
-      } catch (e) {
-        // ignore
-      }
-      return;
-    }
-
-    let contextMessage: string | undefined;
-    if (message.reference?.messageId) {
-      try {
-        if (message.channel.isTextBased()) {
-          const refMsg = await message.channel.messages.fetch(message.reference.messageId);
-          if (refMsg) {
-            const refAuthor = refMsg.member?.displayName || refMsg.author.username;
-            const refContent = refMsg.content.slice(0, 2000);
-            contextMessage = `[${formatUtc8(refMsg.createdTimestamp)}] [${refAuthor}]: ${refContent}`;
-            console.log(`[AI] 获取到引用消息 (${refAuthor}): ${refContent.slice(0, 80)}...`);
-            const refImgs = extractImageUrls(refMsg);
-            if (refImgs.length) imageUrls = [...imageUrls, ...refImgs].slice(0, 6);
-          }
-        }
-      } catch (e) {
-        console.error(`[AI] 获取引用消息失败 (messageId=${message.reference.messageId}):`, (e as Error).message);
-      }
-    } else if (message.reference) {
-      console.warn(`[AI] 检测到 message.reference 但无 messageId:`, JSON.stringify(message.reference));
-    }
-
-    if (contextMessage) {
-      console.log(`[AI] 带上下文回复 ${message.author.username} (引用: ${contextMessage.slice(0, 40)}...)`);
-    }
-
-    const displayName = message.member?.displayName || message.author.username;
-    const summaryEnabled = !!getConfig().ai.summary?.enabled;
-    const channel = message.channel;
-
-    const stopTyping = channel.isTextBased() ? startTyping(channel as TextChannel) : () => {};
-
-    let reply = '';
-    let reactions: string[] = [];
-    try {
-      const res = await chatWithAI(content, {
-        username: message.author.username,
-        displayName,
-        contextMessage,
-        platform: 'discord',
-        channelId: message.channelId,
-        messageId: message.id,
-        images: imageUrls.length ? imageUrls : undefined,
-        bareMention,
-        backfillChannel: summaryEnabled && channel.isTextBased()
-          ? (target: number) => backfillChannelHistory(channel as TextChannel, message.channelId, target)
-          : undefined,
-      });
-      reply = res.reply;
-      reactions = res.reactions;
-    } catch (e) {
-      // chatWithAI 正常不会抛(内部已兜底)，但万一抛出也要给用户一条兜底消息，绝不静默装死
-      console.error('[AI] chatWithAI 异常(兜底):', (e as Error).message);
-      reply = 'AI 暂时不可用，请稍后再试。';
-    } finally {
-      stopTyping();
-    }
-
-    for (const emoji of reactions) {
-      try {
-        await message.react(emoji);
-      } catch (e) {
-        console.warn(`[AI] 贴表情失败 (${emoji}):`, (e as Error).message);
-      }
-    }
-
-    await sendChunkedReply(message, reply);
-    console.log(`[AI] 回复 ${message.author.username}: ${reply.slice(0, 60).replace(/\s+/g, ' ')}...`);
+  client.on('messageCreate', (message: Message) => {
+    // 这是消息路径上最热的一段(每条消息都跑)：任何异常只记录，绝不能逃逸成未处理拒绝
+    onMessageCreate(message).catch((e) => console.error('[AI] 处理消息异常(已忽略):', (e as Error)?.message || e));
   });
 
   console.log('Discord AI 聊天监听器已注册');
   return true;
 }
 
-function isAiAllowedGuild(guildId: string | null): boolean {
-  const allowed = getConfig().ai.allowedGuildIds;
-  if (!allowed || allowed.length === 0) return true;
-  return !!guildId && allowed.map(String).includes(guildId);
+/** 这条消息是在叫 bot：直接 @ bot、回复 bot 的消息、或 @ 了 bot 的托管角色。@everyone / @here 不算。 */
+function isAddressedToBot(message: Message, selfId: string): boolean {
+  if (message.mentions.has(selfId, { ignoreEveryone: true, ignoreRoles: true, ignoreRepliedUser: true })) return true;
+  if (message.mentions.repliedUser?.id === selfId) return true;
+  return message.mentions.roles.some((r) => isSelfRole(message.guild, r.id, selfId));
 }
 
-const exhaustedChannels = new Set<string>();
+async function onMessageCreate(message: Message): Promise<void> {
+  if (!client?.user) return;
+  const selfId = client.user.id;
 
-async function backfillChannelHistory(
-  channel: TextChannel,
-  channelId: string,
-  targetTotal: number
-): Promise<void> {
-  let have = getChannelMessageCount('discord', channelId);
-  if (have >= targetTotal) return;
-  if (exhaustedChannels.has(channelId)) return;
+  const addressed = !message.author.bot && isAddressedToBot(message, selfId);
+  // 每条消息（包括 bot 自己发出的）都先入库；关掉被动观察时只记叫到 bot 的消息。入库失败只告警，不影响后续回复
+  ingestLiveMessage(message, selfId, { addressed });
 
-  let before = getOldestStoredMessageId('discord', channelId) || undefined;
-  let guard = 0;
-
-  while (have < targetTotal && guard < 40) {
-    const batch = await channel.messages.fetch({ limit: 100, before });
-    if (batch.size === 0) {
-      exhaustedChannels.add(channelId);
-      break;
-    }
-
-    const arr = [...batch.values()];
-    for (const m of arr) {
-      if (m.author.bot) continue;
-      const author = m.member?.displayName || m.author.username;
-      recordChannelMessage('discord', channelId, m.id, author, m.cleanContent, m.createdTimestamp, extractImageUrls(m));
-    }
-    before = arr[arr.length - 1].id;
-    have = getChannelMessageCount('discord', channelId);
-    guard++;
-
-    if (batch.size < 100) {
-      exhaustedChannels.add(channelId);
-      break;
-    }
+  if (message.author.bot) return;
+  if (!addressed) {
+    // 不是在叫 bot：交给主动插话（防抖后评估要不要自己插一句）
+    if (isGuildAllowed(message.guildId)) onUnaddressedMessage(message, selfId);
+    return;
   }
 
-  console.log(`[AI] 频道 ${channelId} 历史补全至 ${have} 条 (目标 ${targetTotal})`);
-}
-
-function extractImageUrls(message: Message): string[] {
-  const urls: string[] = [];
-  for (const att of message.attachments.values()) {
-    const ct = att.contentType?.toLowerCase() || '';
-    const supported = ct
-      ? ct === 'image/png' || ct === 'image/jpeg' || ct === 'image/webp'
-      : /\.(png|jpe?g|webp)$/i.test(att.name || '');
-    if (supported && att.url && (att.size ?? 0) <= 10 * 1024 * 1024) urls.push(att.url);
-    if (urls.length >= 6) break;
+  if (!isGuildAllowed(message.guildId)) {
+    console.log(`[AI] 服务器 ${message.guildId || 'DM'} 不在 AI 允许列表中，跳过`);
+    return;
   }
-  return urls;
-}
-
-function startTyping(channel: TextChannel): () => void {
-  const send = () => {
-    channel.sendTyping().catch(() => {});
-  };
-  send();
-  const timer = setInterval(send, 8000);
-  return () => clearInterval(timer);
-}
-
-async function sendChunkedReply(message: Message, text: string): Promise<void> {
-  const maxLen = 1900;
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    let chunk = remaining.slice(0, maxLen);
-    const lastNewline = chunk.lastIndexOf('\n');
-    if (remaining.length > maxLen && lastNewline > maxLen / 2) {
-      chunk = remaining.slice(0, lastNewline);
-    }
-    chunks.push(chunk);
-    remaining = remaining.slice(chunk.length);
-  }
-
+  // 有人直接叫 bot：如果刚刚主动插过话，这算是被接住了
+  onAddressedMessage(message);
+  // 正在直接回复（从读引用消息到发送、入库、更新冷却）：这个频道排着的主动插话先别插，免得对同一条消息再答一遍
+  beginDirectReply(message.channelId);
   try {
-    for (const chunk of chunks) {
-      await message.reply({ content: chunk, allowedMentions: { repliedUser: false } });
-      if (chunks.length > 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+    await replyDirectly(message, selfId);
+  } finally {
+    endDirectReply(message.channelId);
+  }
+}
+
+/**
+ * 被引用的消息能不能带进上下文（和入库的规则一致）：不是 TA /forget-me 之前写的；
+ * 也不是当时连带删除的 bot 消息（消息墓碑），或 bot 回复删除前的 TA 的消息。
+ */
+function referenceAllowed(ref: Message): boolean {
+  if (forgottenBefore(ref.author.id, ref.createdTimestamp) || isForgottenMessage(ref.id)) return false;
+  const repliedTo = ref.author.bot ? ref.mentions.repliedUser?.id : undefined;
+  return !(repliedTo && forgottenBefore(repliedTo, ref.createdTimestamp));
+}
+
+/** 被引用（回复）的那条消息 */
+async function fetchReferenced(message: Message): Promise<Message | null> {
+  if (!message.reference?.messageId) {
+    if (message.reference) console.warn(`[AI] 检测到 message.reference 但无 messageId:`, JSON.stringify(message.reference));
+    return null;
+  }
+  try {
+    return message.channel.isTextBased() ? await message.channel.messages.fetch(message.reference.messageId) : null;
+  } catch (e) {
+    console.error(`[AI] 获取引用消息失败 (messageId=${message.reference.messageId}):`, (e as Error).message);
+    return null;
+  }
+}
+
+/** 发出的回复因为期间发生了删除而不该入库：记消息墓碑，并删掉 Discord 回传后可能已经先入库的同一条 */
+function discardSent(sent: Message[]): void {
+  for (const m of sent) {
+    recordForgottenMessage(m.id, Date.now());
+    ingestDelete(m.id);
+  }
+}
+
+async function replyDirectly(message: Message, selfId: string): Promise<void> {
+  // 正文里的 <@id> 等标记渲染成 @显示名（去掉对 bot 自己的 @），模型才知道提到的是谁
+  const rendered = renderMessage(message, selfId, true);
+  const content = rendered.text;
+  const ownImages = imageUrlsFromDiscord(message);
+  const bareMention = !content && ownImages.length === 0 && !message.reference?.messageId;
+
+  if (bareMention && !getConfig().ai.summary?.enabled) {
+    try {
+      await message.reply('你好！请 @我 然后输入你的问题，我会尽力回答。');
+    } catch (e) {
+      // ignore
+    }
+    return;
+  }
+
+  const refMsg = await fetchReferenced(message);
+  const startedAt = Date.now();
+  /**
+   * 本轮的上下文：被 @ 的人 + 被回复消息的作者（都不含 bot 自己）、被引用的消息、图片。
+   * 每次生成前重新组装：期间执行了 /forget-me 的人不再出现，TA 删除之前写的那条被引用消息（原文、身份、图片）也不带。
+   */
+  const buildInputs = (): { people: Map<string, PersonRef>; contextMessage: string | undefined; imageUrls: string[] } => {
+    const people = new Map<string, PersonRef>();
+    for (const p of mentionedPeople(rendered)) {
+      if (!p.isSelf && p.id !== message.author.id && (forgottenAt(p.id) ?? 0) < startedAt) people.set(p.id, p);
+    }
+    let contextMessage: string | undefined;
+    let imageUrls = ownImages;
+    if (refMsg && referenceAllowed(refMsg)) {
+      const refAuthor = refMsg.member?.displayName || refMsg.author.username;
+      const refContent = withoutForgottenRendered(renderMessage(refMsg, selfId), refMsg.createdTimestamp).text.slice(0, 2000);
+      contextMessage = `[${formatUtc8(refMsg.createdTimestamp)}] [${refAuthor}]: ${refContent}`;
+      if (refMsg.author.id !== selfId && refMsg.author.id !== message.author.id) {
+        people.set(refMsg.author.id, personFromDiscord(refMsg.author, refMsg.member, selfId));
+      }
+      const refImgs = imageUrlsFromDiscord(refMsg);
+      if (refImgs.length) imageUrls = [...imageUrls, ...refImgs].slice(0, 6);
+    }
+    return { people, contextMessage, imageUrls };
+  };
+
+  const displayName = message.member?.displayName || message.author.username;
+  const summaryEnabled = !!getConfig().ai.summary?.enabled;
+  const channel = message.channel;
+  const stopTyping = channel.isTextBased() ? startTyping(channel as TextChannel) : () => {};
+
+  let reply = '';
+  let reactions: string[] = [];
+  let inputs = buildInputs();
+  if (inputs.contextMessage) {
+    console.log(`[AI] 带上下文回复 ${message.author.username} (引用: ${inputs.contextMessage.slice(0, 40)}...)`);
+  }
+  const mentionable = new Set<string>();
+  // 回复对应的删除代次：之后（贴表情、发送期间）有人删除了数据，就不能再把这次的结果当成删除后的数据入库
+  let genEpoch = forgetEpoch();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      genEpoch = forgetEpoch();
+      const res = await chatWithAI(content, {
+        username: message.author.username,
+        userId: message.author.id,
+        displayName,
+        speaker: personFromDiscord(message.author, message.member, selfId),
+        people: [...inputs.people.values()],
+        contextMessage: inputs.contextMessage,
+        platform: 'discord',
+        guildId: message.guildId ?? undefined,
+        channelId: message.channelId,
+        messageId: message.id,
+        images: inputs.imageUrls.length ? inputs.imageUrls : undefined,
+        bareMention,
+        backfillChannel:
+          (summaryEnabled || getConfig().ai.memory.enabled) && channel.isTextBased() && message.guild
+            ? (target: number) => backfillForTool(channel as GuildTextBasedChannel, selfId, target).then(() => undefined)
+            : undefined,
+        refreshPerson: (uid: string) => refreshPersonFromDiscord(message.guild, uid),
+        canQuoteChannel: channelQuoteGuard(message.client, message.author.id),
+      });
+      reply = res.reply;
+      reactions = res.reactions;
+      mentionable.clear();
+      for (const id of [message.author.id, ...inputs.people.keys(), ...(res.mentionableIds ?? [])]) mentionable.add(id);
+      // 生成期间有人 /forget-me 或删除了记忆：模型手里的上下文可能带着被删的内容，用删除后的数据重新生成一次
+      if (forgetEpoch() === genEpoch || attempt >= 1) break;
+      console.log('[AI] 生成期间有数据被删除，按删除后的数据重新生成');
+      inputs = buildInputs();
+    }
+  } catch (e) {
+    // chatWithAI 正常不会抛(内部已兜底)，但万一抛出也要给用户一条兜底消息，绝不静默装死
+    console.error('[AI] chatWithAI 异常(兜底):', (e as Error).message);
+    reply = 'AI 暂时不可用，请稍后再试。';
+  } finally {
+    stopTyping();
+  }
+
+  for (const emoji of reactions) {
+    try {
+      await message.react(emoji);
+    } catch (e) {
+      console.warn(`[AI] 贴表情失败 (${emoji}):`, (e as Error).message);
+    }
+  }
+
+  // 发送前按当前状态重算提醒白名单：这期间删除了自己数据的人不再提醒
+  for (const id of [...mentionable]) if ((forgottenAt(id) ?? 0) >= startedAt) mentionable.delete(id);
+  // 回复里的 @ 只保留本轮上下文出现过的人，其余改成纯文本；@everyone/@here/角色一律不提醒
+  const { text, userIds } = sanitizeOutgoingMentions(
+    reply,
+    mentionable,
+    (id) => personFromDb(id, message.guildId, selfId)?.displayName ?? null
+  );
+  const sent = await sendAiText(message, text, userIds);
+  // bot 说过话了（不管入不入库）：主动插话的冷却从现在算
+  if (sent.length > 0) markBotMessage(message.channelId, Date.now());
+  if (forgetEpoch() !== genEpoch) {
+    // 生成之后（贴表情、发送期间）又有人删除了数据：这次的回复不入库，也不做互动评估
+    discardSent(sent);
+  } else {
+    for (const m of sent) ingestLiveMessage(m, selfId, { kind: 'bot_ai' });
+    if (sent.length > 0) {
+      try {
+        // 异步评估这次互动：好感、印象、心情、自我记忆（不增加回复延迟）
+        queueAppraisal({
+          userId: message.author.id,
+          guildId: message.guildId,
+          channelId: message.channelId,
+          userMessageId: message.id,
+          botMessageIds: sent.map((m) => m.id),
+          personaId: activePersona(message.guildId)?.id ?? null,
+        });
+      } catch (e) {
+        console.warn('[AI] 投递互动评估失败(忽略):', (e as Error).message);
       }
     }
-  } catch (error) {
-    console.error('Discord AI 回复发送失败:', error);
   }
+  console.log(`[AI] 回复 ${message.author.username}: ${text.slice(0, 60).replace(/\s+/g, ' ')}...`);
 }
+
