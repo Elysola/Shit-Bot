@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import * as path from 'path';
 import * as fs from 'fs';
+import { migrateAiSchema } from './ai/db/schema';
 
 function resolveDataDir(): string {
   const cwd = path.join(process.cwd(), 'data');
@@ -11,7 +12,23 @@ function resolveDataDir(): string {
 const DATA_DIR = resolveDataDir();
 const DB_PATH = path.join(DATA_DIR, 'bot.db');
 
+/** data 目录（bot.db 所在处）。人设卡、lorebook 等相对路径以它的上一级（项目根）为基准解析。 */
+export function getDataDir(): string {
+  return DATA_DIR;
+}
+
+/** 把配置里的相对路径（如 data/personas）解析成绝对路径；绝对路径原样返回 */
+export function resolveProjectPath(p: string): string {
+  return path.isAbsolute(p) ? p : path.join(path.dirname(DATA_DIR), p);
+}
+
 let db: Database | null = null;
+// 每次 initDatabase 自增；各模块的内存缓存据此判断数据库是否已被替换（测试换内存库时尤其需要）
+let dbGeneration = 0;
+
+export function getDatabaseGeneration(): number {
+  return dbGeneration;
+}
 
 function ensureDataDir(): void {
   if (!fs.existsSync(DATA_DIR)) {
@@ -19,10 +36,17 @@ function ensureDataDir(): void {
   }
 }
 
-export function initDatabase(): void {
-  ensureDataDir();
+/** 打开数据库并建表/迁移。dbPath 传 ':memory:' 可得到一个独立的内存库（测试用）；重复调用会先关闭旧连接。 */
+export function initDatabase(dbPath: string = DB_PATH): void {
+  const inMemory = dbPath === ':memory:';
+  if (!inMemory) ensureDataDir();
 
-  db = new Database(DB_PATH);
+  if (db) {
+    db.close();
+    db = null;
+  }
+  db = new Database(dbPath);
+  dbGeneration++;
 
   db.run('PRAGMA journal_mode = WAL');
 
@@ -105,7 +129,10 @@ export function initDatabase(): void {
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_dead_letters_tweet_id ON dead_letters(tweet_id)');
 
-  console.log(`数据库已初始化: ${DB_PATH}`);
+  // AI 相关表走版本化迁移；失败只会让记忆类功能不可用，不影响推文转发等核心功能
+  migrateAiSchema(db, { quiet: inMemory });
+
+  if (!inMemory) console.log(`数据库已初始化: ${dbPath}`);
 }
 
 export function getDatabase(): Database {
