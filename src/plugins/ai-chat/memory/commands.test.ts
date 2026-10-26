@@ -67,4 +67,12 @@ describe('/pronouns（与远端的代词功能合并）', () => {
     expect(await runCommand('pronouns', { 代词: '清除' })).toContain('已清除');
     expect(activeSlot('user', A, 'pronouns')).toBeNull();
   });
+
+  test('取值带敏感话题时标为敏感：只在本人自己的档案里出现', async () => {
+    const { identityLines } = await import('./dossier');
+    await runCommand('pronouns', { 代词: '她（跨性别）' });
+    expect(activeSlot('user', A, 'pronouns')?.sensitive).toBe(1);
+    expect(identityLines(A, GUILD_ID, true)[0]).not.toContain('代词');
+    expect(identityLines(A, GUILD_ID, true, true)[0]).toContain('代词：她（跨性别）');
+  });
 });

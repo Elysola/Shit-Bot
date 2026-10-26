@@ -140,6 +140,8 @@ async function onPronouns(interaction: ChatInputCommandInteraction): Promise<voi
     content: `希望别人用「${value}」来指代自己`,
     importance: 7,
     pinned: false,
+    // 和 /callme 一样：取值里带着敏感话题时标为敏感，只在和本人聊天时使用
+    sensitive: looksSensitive(value),
     origin: 'user',
     sourceUserId: userId,
   });
