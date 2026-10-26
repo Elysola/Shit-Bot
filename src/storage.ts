@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import * as path from 'path';
 import * as fs from 'fs';
-import { migrateAiSchema } from './ai/db/schema';
+import { logger } from '@/logger';
 
 function resolveDataDir(): string {
   const cwd = path.join(process.cwd(), 'data');
@@ -12,7 +12,7 @@ function resolveDataDir(): string {
 const DATA_DIR = resolveDataDir();
 const DB_PATH = path.join(DATA_DIR, 'bot.db');
 
-/** data 目录（bot.db 所在处）。人设卡、lorebook 等相对路径以它的上一级（项目根）为基准解析。 */
+/** data 目录（bot.db 所在处）。人设卡、设定集等相对路径以它的上一级（项目根）为基准解析。 */
 export function getDataDir(): string {
   return DATA_DIR;
 }
@@ -36,7 +36,7 @@ function ensureDataDir(): void {
   }
 }
 
-/** 打开数据库并建表/迁移。dbPath 传 ':memory:' 可得到一个独立的内存库（测试用）；重复调用会先关闭旧连接。 */
+/** 打开数据库并建表。dbPath 传 ':memory:' 可得到一个独立的内存库（测试用）；重复调用会先关闭旧连接。 */
 export function initDatabase(dbPath: string = DB_PATH): void {
   const inMemory = dbPath === ':memory:';
   if (!inMemory) ensureDataDir();
@@ -88,12 +88,24 @@ export function initDatabase(dbPath: string = DB_PATH): void {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sent_onebot_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      message_id INTEGER NOT NULL,
+      tweet_id TEXT,
+      sent_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    )
+  `);
+
   db.run('CREATE INDEX IF NOT EXISTS idx_sent_tweets_author ON sent_tweets(author)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sent_tweets_sent_at ON sent_tweets(sent_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sent_messages_channel ON sent_messages(channel_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sent_messages_tweet_id ON sent_messages(tweet_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sent_tg_messages_chat ON sent_tg_messages(chat_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sent_tg_messages_tweet_id ON sent_tg_messages(tweet_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_sent_onebot_messages_group ON sent_onebot_messages(group_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_sent_onebot_messages_tweet_id ON sent_onebot_messages(tweet_id)');
 
   db.run(`
     CREATE TABLE IF NOT EXISTS pending_approvals (
@@ -117,6 +129,12 @@ export function initDatabase(dbPath: string = DB_PATH): void {
     // column already exists
   }
 
+  try {
+    db.run('ALTER TABLE pending_approvals ADD COLUMN onebot_msg_ids TEXT NOT NULL DEFAULT \'{}\'');
+  } catch {
+    // column already exists
+  }
+
   db.run(`
     CREATE TABLE IF NOT EXISTS dead_letters (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,10 +147,7 @@ export function initDatabase(dbPath: string = DB_PATH): void {
   `);
   db.run('CREATE INDEX IF NOT EXISTS idx_dead_letters_tweet_id ON dead_letters(tweet_id)');
 
-  // AI 相关表走版本化迁移；失败只会让记忆类功能不可用，不影响推文转发等核心功能
-  migrateAiSchema(db, { quiet: inMemory });
-
-  if (!inMemory) console.log(`数据库已初始化: ${dbPath}`);
+  if (!inMemory) logger.info('Storage', `数据库已初始化: ${dbPath}`);
 }
 
 export function getDatabase(): Database {
@@ -184,7 +199,7 @@ export function cleanupOldRecords(maxAgeDays: number = 30): number {
   const result = database.run('DELETE FROM sent_tweets WHERE sent_at < ?', [cutoff]);
 
   if (result.changes > 0) {
-    console.log(`已清理 ${result.changes} 条旧记录`);
+    logger.info('Storage', `已清理 ${result.changes} 条旧记录`);
   }
 
   return result.changes;
@@ -218,7 +233,8 @@ export function cacheImage(tweetId: string, imageBuffer: Buffer): void {
 export function getCachedImage(tweetId: string): Buffer | null {
   const database = getDatabase();
   const row = database.query('SELECT image_data FROM image_cache WHERE tweet_id = ?').get(tweetId) as { image_data: Buffer } | undefined;
-  return row ? row.image_data : null;
+  if (!row) return null;
+  return Buffer.from(row.image_data);
 }
 
 export function cleanupExpiredImages(maxAgeMinutes: number = 60): number {
@@ -227,7 +243,7 @@ export function cleanupExpiredImages(maxAgeMinutes: number = 60): number {
   const result = database.run('DELETE FROM image_cache WHERE created_at < ?', [cutoff]);
 
   if (result.changes > 0) {
-    console.log(`已清理 ${result.changes} 条过期缓存图片`);
+    logger.info('Storage', `已清理 ${result.changes} 条过期缓存图片`);
   }
 
   return result.changes;
@@ -319,12 +335,46 @@ export function cleanupOldSentTgMessages(maxAgeDays: number = 7): number {
   return result.changes;
 }
 
+export function storeSentOneBotMessage(groupId: number, messageId: number, tweetId?: string): void {
+  const database = getDatabase();
+  database.run(
+    `INSERT INTO sent_onebot_messages (group_id, message_id, tweet_id, sent_at) VALUES (?, ?, ?, ?)`,
+    [groupId, messageId, tweetId || null, Date.now()]
+  );
+}
+
+export function getSentOneBotMessagesByTweetId(tweetId: string): Array<{
+  id: number;
+  group_id: number;
+  message_id: number;
+  tweet_id: string | null;
+  sent_at: number;
+}> {
+  const database = getDatabase();
+  return database.query(
+    'SELECT * FROM sent_onebot_messages WHERE tweet_id = ?'
+  ).all(tweetId) as any[];
+}
+
+export function deleteSentOneBotMessage(messageId: number, groupId: number): void {
+  const database = getDatabase();
+  database.run('DELETE FROM sent_onebot_messages WHERE message_id = ? AND group_id = ?', [messageId, groupId]);
+}
+
+export function cleanupOldSentOneBotMessages(maxAgeDays: number = 7): number {
+  const database = getDatabase();
+  const cutoff = Date.now() - (maxAgeDays * 24 * 60 * 60 * 1000);
+  const result = database.run('DELETE FROM sent_onebot_messages WHERE sent_at < ?', [cutoff]);
+  return result.changes;
+}
+
 export interface PersistedApproval {
   approvalId: string;
   groupName: string;
   tweetJson: string;
   telegramMsgIds: string;
   discordMsgIds: string;
+  onebotMsgIds: string;
   createdAt: number;
   approved: number;
   approvedBy: string | null;
@@ -339,14 +389,15 @@ export function storePendingApproval(approval: {
   tweetJson: string;
   telegramMsgIds: Record<string, number>;
   discordMsgIds: Record<string, string>;
+  onebotMsgIds: Record<string, number>;
   createdAt: Date;
   approved: boolean;
   hasImage: boolean;
 }): void {
   const database = getDatabase();
   database.run(
-    `INSERT OR REPLACE INTO pending_approvals (approval_id, group_name, tweet_id, tweet_json, telegram_msg_ids, discord_msg_ids, created_at, approved, has_image)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO pending_approvals (approval_id, group_name, tweet_id, tweet_json, telegram_msg_ids, discord_msg_ids, onebot_msg_ids, created_at, approved, has_image)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       approval.approvalId,
       approval.groupName,
@@ -354,6 +405,7 @@ export function storePendingApproval(approval: {
       approval.tweetJson,
       JSON.stringify(approval.telegramMsgIds),
       JSON.stringify(approval.discordMsgIds),
+      JSON.stringify(approval.onebotMsgIds),
       approval.createdAt.getTime(),
       approval.approved ? 1 : 0,
       approval.hasImage ? 1 : 0,
@@ -369,19 +421,47 @@ export function markApprovalDone(approvalId: string, approvedBy?: string, sentTo
   );
 }
 
-export function deletePendingApproval(approvalId: string): void {
+/**
+ * 原子性地"认领"一条待审批记录: 仅当当前 approved = 0 时将其置为 1。
+ * 返回 true 表示认领成功(本次调用抢到了处理权), false 表示已被其他处理者认领。
+ * 用于防止重复点击审批按钮导致同一推文被发送多次的竞态问题。
+ */
+export function claimApproval(approvalId: string): boolean {
+  const database = getDatabase();
+  const result = database.run(
+    `UPDATE pending_approvals SET approved = 1 WHERE approval_id = ? AND approved = 0`,
+    [approvalId]
+  );
+  return result.changes > 0;
+}
+
+export function deletePendingApproval(approvalId: string | null | undefined): void {
+  if (!approvalId) return;
   const database = getDatabase();
   database.run('DELETE FROM pending_approvals WHERE approval_id = ?', [approvalId]);
 }
 
+export function cleanupCorruptedApprovals(): number {
+  const database = getDatabase();
+  const result = database.run(
+    `DELETE FROM pending_approvals WHERE approval_id IS NULL OR approval_id = '' OR tweet_json = 'undefined' OR tweet_json IS NULL`
+  );
+  if (result.changes > 0) {
+    logger.info('Storage', `已清理 ${result.changes} 条损坏的审批记录`);
+  }
+  return result.changes;
+}
+
+const APPROVAL_COLS = `approval_id as "approvalId", group_name as "groupName", tweet_json as "tweetJson", telegram_msg_ids as "telegramMsgIds", discord_msg_ids as "discordMsgIds", onebot_msg_ids as "onebotMsgIds", created_at as "createdAt", approved, approved_by as "approvedBy", sent_to as "sentTo", has_image as "hasImage"`;
+
 export function getAllPendingApprovals(): PersistedApproval[] {
   const database = getDatabase();
-  return database.query('SELECT * FROM pending_approvals WHERE approved = 0').all() as PersistedApproval[];
+  return database.query(`SELECT ${APPROVAL_COLS} FROM pending_approvals WHERE approved = 0`).all() as PersistedApproval[];
 }
 
 export function getPendingApproval(approvalId: string): PersistedApproval | null {
   const database = getDatabase();
-  return (database.query('SELECT * FROM pending_approvals WHERE approval_id = ?').get(approvalId) as PersistedApproval) || null;
+  return (database.query(`SELECT ${APPROVAL_COLS} FROM pending_approvals WHERE approval_id = ?`).get(approvalId) as PersistedApproval) || null;
 }
 
 export function hasPendingApprovalForTweet(tweetId: string, groupName?: string): boolean {
@@ -406,6 +486,6 @@ export function closeDatabase(): void {
   if (db) {
     db.close();
     db = null;
-    console.log('数据库已关闭');
+    logger.info('Storage', '数据库已关闭');
   }
 }

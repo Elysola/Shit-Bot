@@ -40,7 +40,11 @@ port = 3000
 host = "0.0.0.0"
 password = ""
 
-[ai]
+[[plugins]]
+name = "ai-chat"
+enabled = true                # 插件开关（关掉后完全不加载）
+
+[plugins.options]
 enabled = false
 apiUrl = "https://api.openai.com/v1"
 apiKey = ""               # 环境变量 AI_API_KEY
@@ -51,23 +55,24 @@ temperature = 0.7
 allowedGuildIds = []      # 空 = 所有服务器
 maxToolIterations = 12
 reactions = true          # 让模型在最终回复里返回 emoji 短码, 给用户消息贴表情反应
+ignoreEveryoneMention = true   # @everyone / @here 不算叫到 bot
 
-[ai.webSearch]
+[plugins.options.webSearch]
 enabled = false
 provider = "duckduckgo"   # duckduckgo | tavily | serper | brave | searxng
 apiKey = ""               # tavily / serper / brave 需要
 baseUrl = ""              # searxng 实例地址
 maxResults = 5
 
-[ai.persona]              # 人设卡（data/personas/<id>.yaml，首次启动自动生成 memecat）
+[plugins.options.persona]              # 人设卡（data/personas/<id>.yaml，首次启动自动生成 memecat）
 dir = "data/personas"
 default = "memecat"
 guilds = {}               # 按服务器指定人设卡：{ "服务器ID" = "人设卡ID" }
 
-[ai.lore]
+[plugins.options.lore]
 dir = "data/lore"         # 设定集（关键词触发的世界观 / 梗 / 群规条目）
 
-[ai.history]              # 启动 / 重连时自动回望补全历史消息
+[plugins.options.history]              # 启动 / 重连时自动回望补全历史消息
 gapFillOnStartup = true
 initialDays = 30
 maxMessagesPerChannel = 5000
@@ -75,16 +80,16 @@ includeThreads = true
 archivedThreadDays = 30
 requestIntervalMs = 350
 
-[ai.memory]
+[plugins.options.memory]
 enabled = true
 
-[ai.memory.observe]       # 被动观察：所有成员在所有可见频道的消息都入库（不只是和 bot 聊天时）；关掉后只记和 bot 的直接对话
+[plugins.options.memory.observe]       # 被动观察：所有成员在所有可见频道的消息都入库（不只是和 bot 聊天时）；关掉后只记和 bot 的直接对话
 enabled = true
 channelDenylist = []      # 不观察的频道 / 分类 ID
 retentionDays = 0         # 原始消息保留天数，0 = 永久（提炼出的记忆不受影响）
 crossGuildMessages = false   # 是否允许模型跨服务器查看某人的原话
 
-[ai.memory.extractor]     # 后台提炼用的模型；空 = 沿用 ai.model / apiUrl / apiKey
+[plugins.options.memory.extractor]     # 后台提炼用的模型；空 = 沿用上面的 model / apiUrl / apiKey
 model = ""
 apiUrl = ""
 apiKey = ""               # 环境变量 AI_EXTRACTOR_API_KEY
@@ -96,14 +101,14 @@ maxImagesPerWindow = 4
 concurrency = 1
 dailyTokenBudget = 3000000   # 提炼和画像每天的 token 上限（互动评估的用量计入但不受限），0 = 不限
 
-[ai.memory.core]          # 每次聊天都会带上的核心记忆
+[plugins.options.memory.core]          # 每次聊天都会带上的核心记忆
 userPins = 12
 guildPins = 20
 selfPins = 10
 autoPinImportance = 8     # 重要度 ≥ 8 的新记忆自动置顶；11 = 永不
 upcomingDays = 7          # 近期计划 / 事件提前几天带上
 
-[ai.memory.context]       # 每轮上下文的字数预算
+[plugins.options.memory.context]       # 每轮上下文的字数预算
 speakerChars = 1200
 mentionedChars = 500
 mentionedUsers = 3
@@ -114,10 +119,10 @@ recentChannelMessages = 15
 recentChannelChars = 2000
 autoRecall = 0            # 每轮自动附带的相关记忆条数，0 = 只靠模型调用工具
 
-[ai.memory.tools]
+[plugins.options.memory.tools]
 maxResultChars = 30000
 
-[ai.embedding]            # 向量模型（OpenAI 兼容 /embeddings）；apiUrl 和 model 都留空 = 不做向量化
+[plugins.options.embedding]            # 向量模型（OpenAI 兼容 /embeddings）；apiUrl 和 model 都留空 = 不做向量化
 apiUrl = ""               # 例：本机 Ollama http://127.0.0.1:11434/v1
 apiKey = ""               # 环境变量 AI_EMBEDDING_API_KEY
 model = ""                # 例：bge-m3
@@ -127,32 +132,32 @@ timeoutMs = 8000
 queryPrefix = ""
 documentPrefix = ""
 
-[ai.vector]
+[plugins.options.vector]
 backend = "auto"          # auto | sqlite（sqlite-vec，在数据库里算）| js（纯 JS 兜底）
 extensionPath = ""        # 自定义 sqlite-vec 扩展路径；空 = 用 npm 包自带的
 customSqlitePath = ""     # macOS：支持加载扩展的 libsqlite3 路径
 exactThreshold = 3000     # 候选不超过这么多条时直接精确计算
 coarseK = 200             # 否则先二值粗筛这么多条再精确重排
 
-[ai.affinity]             # 好感度（-100..100，6 档；只影响语气和态度，数值不对用户展示）
+[plugins.options.affinity]             # 好感度（-100..100，6 档；只影响语气和态度，数值不对用户展示）
 enabled = true
 maxGainPerInteraction = 5
 maxLossPerInteraction = 8
 dailyGainCap = 15
 dailyLossCap = 30
 
-[ai.affinity.decay]
+[plugins.options.affinity.decay]
 enabled = true
 afterDays = 14
 pointsPerWeek = 1
 
-[ai.mood]                 # 情绪（效价 × 唤醒度；基线和作息在人设卡里）
+[plugins.options.mood]                 # 情绪（效价 × 唤醒度；基线和作息在人设卡里）
 enabled = true
 valenceHalfLifeHours = 3
 arousalHalfLifeHours = 1
 maxUserImpactPerHour = 0.5
 
-[ai.proactive]            # 主动插话
+[plugins.options.proactive]            # 主动插话
 enabled = true
 channels = []             # 白名单；空 = 所有被观察的频道
 denyChannels = []
@@ -168,7 +173,7 @@ quietHours = ""           # "HH:MM-HH:MM"（UTC+8）；空 = 按人设作息
 allowReactOnly = true     # 允许只贴表情不说话
 judgeModel = ""           # 空 = 沿用 extractor.model
 
-[ai.summary]
+[plugins.options.summary]
 enabled = false               # @机器人 "总结一下上面的200条消息" 时生效
 maxMessagesPerChannel = 500    # 单次最多读取 / 总结多少条
 defaultCount = 100             # 未指定条数时默认总结多少条

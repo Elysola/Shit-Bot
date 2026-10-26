@@ -1,9 +1,10 @@
 import { Telegraf } from 'telegraf';
-import { ProcessedTweet } from '../types';
-import { getConfig } from '../config';
-import { formatTweetHTML, escapeHTML } from '../filters';
-import { renderTweetImage } from '../renderer';
-import { storeSentTgMessage } from '../storage';
+import { ProcessedTweet } from '@/types';
+import { getConfig } from '@/config';
+import { formatTweetHTML, escapeHTML } from '@/filters';
+import { renderTweetImage } from '@/renderer';
+import { storeSentTgMessage } from '@/storage';
+import { logger } from '@/logger';
 
 let bot: Telegraf | null = null;
 
@@ -34,7 +35,7 @@ function buildAgentOpts(): { httpsAgent?: any; fetch?: any } | undefined {
     const { HttpsProxyAgent } = require('https-proxy-agent');
     return { httpsAgent: new HttpsProxyAgent(proxy) };
   } catch {
-    console.warn('https-proxy-agent 未安装, 代理不会被使用');
+    logger.warn("Telegram", "https-proxy-agent 未安装, 代理不会被使用");
     return undefined;
   }
 }
@@ -43,7 +44,7 @@ export async function initTelegram(): Promise<boolean> {
   const config = getConfig();
 
   if (!config.telegram.enabled) {
-    console.log('Telegram 已在配置中禁用');
+    logger.info("Telegram", "Telegram 已在配置中禁用");
     return false;
   }
 
@@ -61,14 +62,14 @@ export async function initTelegram(): Promise<boolean> {
     bot = new Telegraf(config.telegram.token, options);
 
     bot.catch((err) => {
-      console.error('Telegram bot 错误:', err);
+      logger.error("Telegram", "Telegram bot 错误:", err);
     });
 
     await bot.telegram.getMe();
-    console.log('Telegram bot 已连接');
+    logger.info("Telegram", "Telegram bot 已连接");
     return true;
   } catch (error) {
-    console.error('Telegram 初始化失败:', error);
+    logger.error("Telegram", "Telegram 初始化失败:", error);
     bot = null;
     return false;
   }
@@ -79,12 +80,12 @@ export async function sendToTelegram(tweet: ProcessedTweet, targetChatId?: strin
   const sendImage = asImage ?? config.sendAsImage;
   const chatId = targetChatId;
   if (!chatId) {
-    console.error('未提供 Telegram 发送的 chat ID');
+    logger.error("Telegram", "未提供 Telegram 发送的 chat ID");
     return false;
   }
 
   if (!bot) {
-    console.error('Telegram 未初始化');
+    logger.error("Telegram", "Telegram 未初始化");
     return false;
   }
 
@@ -93,7 +94,7 @@ export async function sendToTelegram(tweet: ProcessedTweet, targetChatId?: strin
   if (sendImage) {
     const imageSent = await trySendImage(chatId, tweet, message, preRenderedImage, approvalId);
     if (imageSent) return true;
-    console.warn(`图片发送失败, 推文 ${tweet.id}, 回退到文本模式`);
+    logger.warn("Telegram", `图片发送失败, 推文 ${tweet.id}, 回退到文本模式`);
   }
 
   if (tweet.mediaUrls.length > 0 && tweet.mediaUrls[0]) {
@@ -104,7 +105,7 @@ export async function sendToTelegram(tweet: ProcessedTweet, targetChatId?: strin
   const textSent = await trySendText(chatId, message, `tweet ${tweet.id}`, tweet.id, approvalId);
   if (textSent) return true;
 
-  console.error(`[Telegram] 推文 ${tweet.id} 发送失败, 所有方式均未成功`);
+  logger.error("Telegram", `推文 ${tweet.id} 发送失败, 所有方式均未成功`);
   return false;
 }
 
@@ -125,10 +126,10 @@ async function trySendImage(chatId: string, tweet: ProcessedTweet, message: stri
         { caption, parse_mode: 'HTML' }
       ));
       storeSentTgMessage(chatId, sent.message_id, tweet.id);
-      console.log(`[Telegram] 以图片形式发送推文 ${tweet.id} (${chatId})`);
+      logger.info("Telegram", `以图片形式发送推文 ${tweet.id} (${chatId})`);
       return true;
     } catch (error) {
-      console.error(`[Telegram] 图片发送尝试 ${attempt}/3 失败, 推文 ${tweet.id}:`, (error as Error).message);
+      logger.error("Telegram", `图片发送尝试 ${attempt}/3 失败, 推文 ${tweet.id}:`, (error as Error).message);
       if (attempt < 3) {
         await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
       }
@@ -159,10 +160,10 @@ async function trySendMedia(chatId: string, tweet: ProcessedTweet, mediaUrl: str
         }));
       }
       storeSentTgMessage(chatId, sent.message_id, tweet.id);
-      console.log(`[Telegram] 以媒体形式发送推文 ${tweet.id} (${chatId})`);
+      logger.info("Telegram", `以媒体形式发送推文 ${tweet.id} (${chatId})`);
       return true;
     } catch (error) {
-      console.error(`[Telegram] 媒体发送尝试 ${attempt}/3 失败, 推文 ${tweet.id}:`, (error as Error).message);
+      logger.error("Telegram", `媒体发送尝试 ${attempt}/3 失败, 推文 ${tweet.id}:`, (error as Error).message);
       if (attempt < 3) {
         await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
       }
@@ -185,10 +186,10 @@ async function trySendText(chatId: string, message: string, label: string, tweet
       if (tweetId) {
         storeSentTgMessage(chatId, sent.message_id, tweetId);
       }
-      console.log(`[Telegram] 以文本形式发送 ${label} (${chatId})`);
+      logger.info("Telegram", `以文本形式发送 ${label} (${chatId})`);
       return true;
     } catch (error) {
-      console.error(`[Telegram] 文本发送尝试 ${attempt}/3 失败, ${label}:`, (error as Error).message);
+      logger.error("Telegram", `文本发送尝试 ${attempt}/3 失败, ${label}:`, (error as Error).message);
       if (attempt < 3) {
         await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
       }
@@ -216,6 +217,6 @@ export async function shutdownTelegram(): Promise<void> {
   if (bot) {
     bot.stop('关闭');
     bot = null;
-    console.log('Telegram bot 已停止');
+    logger.info("Telegram", "Telegram bot 已停止");
   }
 }

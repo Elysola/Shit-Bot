@@ -1,11 +1,12 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { setConfigForTesting } from '../config';
-import { initDatabase } from '../storage';
-import type { DiscordUserInfo, MemberInfo } from '../ai/identity';
-import type { IngestMessage } from '../ai/ingest';
-import { renderDiscordContent, type MentionResolver, type PersonRef } from '../ai/mentions';
+import { setConfigForTesting } from '@/config';
+import { getDatabase, initDatabase } from '@/storage';
+import { migrateAiSchema } from '@/plugins/ai-chat/db/schema';
+import type { DiscordUserInfo, MemberInfo } from '@/plugins/ai-chat/identity';
+import type { IngestMessage } from '@/plugins/ai-chat/ingest';
+import { renderDiscordContent, type MentionResolver, type PersonRef } from '@/plugins/ai-chat/mentions';
 
 export const SELF_ID = '900000000000000001';
 export const GUILD_ID = '800000000000000001';
@@ -37,18 +38,26 @@ export function setupAiTest(ai: Record<string, unknown> = {}, extra: Record<stri
     twitter: { enabled: false },
     discord: { enabled: false, token: 'x' },
     ...extra,
-    ai: {
-      enabled: true,
-      apiUrl: 'http://llm.test/v1',
-      apiKey: 'k',
-      model: 'chat-m',
-      memory: { enabled: true },
-      persona: { dir: testTempDir('personas') },
-      lore: { dir: testTempDir('lore') },
-      ...ai,
-    },
+    plugins: [
+      {
+        name: 'ai-chat',
+        enabled: true,
+        options: {
+          enabled: true,
+          apiUrl: 'http://llm.test/v1',
+          apiKey: 'k',
+          model: 'chat-m',
+          memory: { enabled: true },
+          persona: { dir: testTempDir('personas') },
+          lore: { dir: testTempDir('lore') },
+          ...ai,
+        },
+      },
+    ],
   });
   initDatabase(':memory:');
+  // AI 表由插件在启动时迁移（onAfterInit）；测试里直接建
+  migrateAiSchema(getDatabase(), { quiet: true });
 }
 
 export type FakeLlmRequest = { url: string; body: Record<string, unknown>; system: string; user: string };

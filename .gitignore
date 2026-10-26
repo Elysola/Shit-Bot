@@ -38,3 +38,11 @@ Thumbs.db
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Docs
+docs/.vitepress/*
+!docs/.vitepress/config.mts
+
+# Nix
+.direnv/
+result

@@ -1,9 +1,12 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getConfig, saveConfig, reloadConfig, getEffectiveGroups, normalizeAiConfig, normalizePrivilegedIntents } from '../config';
-import { getRecentTweets, getSentCount } from '../storage';
-import { AppConfig, GroupConfig } from '../types';
+import { getConfig, saveConfig, reloadConfig, getEffectiveGroups, normalizePrivilegedIntents } from '@/config';
+import { getRecentTweets, getSentCount } from '@/storage';
+import { getLoadedPlugins } from '@/plugins';
+import { sendForApproval } from '@/approval';
+import { AppConfig, GroupConfig, PluginConfigEntry, ProcessedTweet } from '@/types';
+import { logger } from '@/logger';
 
 interface IncomingMessage extends http.IncomingMessage {
   body?: string;
@@ -28,6 +31,7 @@ function sendError(res: http.ServerResponse, message: string, status = 400): voi
 
 function checkAuth(req: IncomingMessage): boolean {
   const cfg = getConfig();
+  if (cfg.debugMode) return true;
   if (!cfg.webui.password) return true;
   const auth = req.headers['authorization'];
   if (!auth) return false;
@@ -46,25 +50,46 @@ function requireAuth(_req: IncomingMessage, res: http.ServerResponse): boolean {
   return false;
 }
 
-/** 掩码或空值都视为"不修改该密钥"（未提供该字段时同样保留旧值） */
-function isMaskedOrEmpty(v: unknown): boolean {
-  return v === undefined || v === null || v === '' || v === '••••••••';
-}
+const MASK = '••••••••';
+// 插件配置里的密钥字段（如 ai-chat 的 apiKey、webSearch.apiKey、memory.extractor.apiKey、embedding.apiKey）
+const SECRET_KEY = /(apikey|token|secret|password)$/i;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** 递归合并普通对象；数组和标量直接以 patch 为准。 */
-export function deepMerge<T>(base: T, patch: unknown): T {
-  if (!isPlainObject(base) || !isPlainObject(patch)) {
-    return (patch === undefined ? base : patch) as T;
+/** 递归把密钥字段换成掩码（有值才掩码，空值保持空） */
+function maskSecrets(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(maskSecrets);
+  if (!isPlainObject(v)) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v)) {
+    out[k] = SECRET_KEY.test(k) && typeof val === 'string' ? (val ? MASK : '') : maskSecrets(val);
   }
-  const out: Record<string, unknown> = { ...base };
-  for (const [k, v] of Object.entries(patch)) {
-    out[k] = isPlainObject(v) && isPlainObject(out[k]) ? deepMerge(out[k], v) : v;
+  return out;
+}
+
+/** 保存时：掩码或空值视为"不修改"，换回原来的值 */
+function restoreSecrets(incoming: unknown, prev: unknown): unknown {
+  if (!isPlainObject(incoming)) return incoming;
+  const before = isPlainObject(prev) ? prev : {};
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(incoming)) {
+    if (SECRET_KEY.test(k) && (val === MASK || val === '') && typeof before[k] === 'string') out[k] = before[k];
+    else out[k] = restoreSecrets(val, before[k]);
   }
-  return out as T;
+  return out;
+}
+
+export function maskPlugin(p: PluginConfigEntry): PluginConfigEntry {
+  return p.options ? { ...p, options: maskSecrets(p.options) as Record<string, any> } : p;
+}
+
+export function restorePlugins(incoming: PluginConfigEntry[], prev: PluginConfigEntry[]): PluginConfigEntry[] {
+  return incoming.map((p) => {
+    const old = prev.find((x) => x.name === p.name);
+    return p.options && old?.options ? { ...p, options: restoreSecrets(p.options, old.options) as Record<string, any> } : p;
+  });
 }
 
 function sanitizeConfigForAPI(cfg: AppConfig): any {
@@ -73,6 +98,7 @@ function sanitizeConfigForAPI(cfg: AppConfig): any {
     groups: cfg.groups || [],
     discord: { ...cfg.discord, token: cfg.discord.token ? '••••••••' : '' },
     telegram: { ...cfg.telegram, token: cfg.telegram.token ? '••••••••' : '' },
+    onebot: { ...cfg.onebot, token: cfg.onebot?.token ? '••••••••' : '', secret: cfg.onebot?.secret ? '••••••••' : '' },
     twitter: {
       ...cfg.twitter,
       authToken: cfg.twitter.authToken ? '••••••••' : '',
@@ -81,16 +107,7 @@ function sanitizeConfigForAPI(cfg: AppConfig): any {
       totpSecret: cfg.twitter.totpSecret ? '••••••••' : '',
     },
     webui: { ...cfg.webui, password: cfg.webui.password ? '••••••••' : '' },
-    ai: {
-      ...cfg.ai,
-      apiKey: cfg.ai.apiKey ? '••••••••' : '',
-      webSearch: { ...cfg.ai.webSearch, apiKey: cfg.ai.webSearch?.apiKey ? '••••••••' : '' },
-      embedding: { ...cfg.ai.embedding, apiKey: cfg.ai.embedding.apiKey ? '••••••••' : '' },
-      memory: {
-        ...cfg.ai.memory,
-        extractor: { ...cfg.ai.memory.extractor, apiKey: cfg.ai.memory.extractor.apiKey ? '••••••••' : '' },
-      },
-    },
+    plugins: (cfg.plugins || []).map(maskPlugin),
     enableApproval: cfg.enableApproval,
     sendAsImage: cfg.sendAsImage,
     xToImageApiUrl: cfg.xToImageApiUrl,
@@ -173,19 +190,10 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
         cfg.webui = { ...cfg.webui, ...body.webui };
         if (body.webui.password && body.webui.password !== '••••••••') cfg.webui.password = body.webui.password;
       }
-      if (body.ai !== undefined) {
-        const prevAi = cfg.ai;
-        // 深合并后再规范化：只传了部分嵌套字段（如 ai.memory.extractor.model）时，其余字段与默认值都保留
-        const merged = normalizeAiConfig(deepMerge(prevAi, body.ai));
-        if (!body.ai.apiKey || body.ai.apiKey === '••••••••') merged.apiKey = prevAi.apiKey;
-        if (merged.webSearch && isMaskedOrEmpty(body.ai.webSearch?.apiKey)) {
-          merged.webSearch.apiKey = prevAi.webSearch?.apiKey || '';
-        }
-        if (isMaskedOrEmpty(body.ai.embedding?.apiKey)) merged.embedding.apiKey = prevAi.embedding.apiKey;
-        if (isMaskedOrEmpty(body.ai.memory?.extractor?.apiKey)) {
-          merged.memory.extractor.apiKey = prevAi.memory.extractor.apiKey;
-        }
-        cfg.ai = merged;
+      if (body.onebot !== undefined) {
+        cfg.onebot = { ...cfg.onebot, ...body.onebot };
+        if (body.onebot.token && body.onebot.token !== '••••••••') cfg.onebot.token = body.onebot.token;
+        if (body.onebot.secret && body.onebot.secret !== '••••••••') cfg.onebot.secret = body.onebot.secret;
       }
       if (body.enableApproval !== undefined) cfg.enableApproval = body.enableApproval;
       if (body.sendAsImage !== undefined) cfg.sendAsImage = body.sendAsImage;
@@ -197,6 +205,7 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
       if (body.maxPostsPerFetch !== undefined) cfg.maxPostsPerFetch = body.maxPostsPerFetch;
       if (body.maxTweetAgeMinutes !== undefined) cfg.maxTweetAgeMinutes = body.maxTweetAgeMinutes;
       if (body.groups !== undefined) cfg.groups = body.groups;
+      if (body.plugins !== undefined) cfg.plugins = Array.isArray(body.plugins) ? restorePlugins(body.plugins, cfg.plugins || []) : cfg.plugins;
 
       saveConfig(cfg);
       sendJSON(res, { success: true });
@@ -312,14 +321,98 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
         pollInterval: cfg.pollIntervalMinutes,
         discordEnabled: cfg.discord.enabled,
         telegramEnabled: cfg.telegram.enabled,
+        onebotEnabled: cfg.onebot?.enabled ?? false,
         approvalEnabled: cfg.enableApproval,
       });
       return;
     }
 
+    if (req.method === 'GET' && urlPath === '/api/plugins') {
+      const loaded = getLoadedPlugins();
+      sendJSON(res, loaded.map(p => ({
+        name: p.manifest.name,
+        version: p.manifest.version,
+        description: p.manifest.description,
+        author: p.manifest.author,
+        enabled: p.config?.enabled !== false,
+        options: maskSecrets(p.config?.options || {}),
+      })));
+      return;
+    }
+
+    if (req.method === 'POST' && urlPath === '/api/debug/test-tweet') {
+      const body = JSON.parse(req.body || '{}');
+      const tweetUrl = body.url;
+      const content = body.content || '这是一条测试推文';
+      const author = body.author || 'test_user';
+      const authorName = body.authorName || 'Test User';
+      const targetTag = body.target || undefined;
+      const useMockImage = body.mockImage === true;
+
+      if (!tweetUrl && !body.mock) {
+        sendError(res, '需要 url 或 mock: true');
+        return;
+      }
+
+      const tweet: ProcessedTweet = {
+        id: body.mock ? `mock_${Date.now()}` : (tweetUrl?.match(/\/status\/(\d+)/)?.[1] || `${Date.now()}`),
+        author,
+        authorName,
+        content,
+        url: tweetUrl || `https://x.com/${author}/status/${Date.now()}`,
+        publishedAt: new Date(),
+        mediaUrls: body.mediaUrls || [],
+        isRetweet: false,
+        isReply: false,
+        matchedUser: { username: '*' },
+        passedFilters: true,
+        filterReasons: [],
+        _skipUserFilter: true,
+      };
+
+      logger.info("Web", `[调试] 手动发送测试推文: ${tweet.url}${targetTag ? ` (目标: ${targetTag})` : ''}${useMockImage ? ' (Mock 图片)' : ''}`);
+
+      if (useMockImage) {
+        const { renderMockImage } = await import('@/renderer');
+        const { cacheImage } = await import('@/storage');
+        const imgBuf = await renderMockImage(tweet);
+        cacheImage(tweet.id, imgBuf);
+      }
+
+      const config = getConfig();
+
+      if (config.enableApproval) {
+        await sendForApproval(tweet);
+      } else {
+        const { sendToAllGroups } = await import('@/approval');
+        await sendToAllGroups(tweet, targetTag);
+      }
+
+      sendJSON(res, { success: true, tweetId: tweet.id, target: targetTag || 'all', mockImage: useMockImage });
+      return;
+    }
+
+    if (req.method === 'POST' && urlPath === '/api/debug/approve') {
+      const body = JSON.parse(req.body || '{}');
+      const approvalId = body.approvalId;
+      const reject = body.reject === true;
+
+      if (!approvalId) {
+        sendError(res, '需要 approvalId');
+        return;
+      }
+
+      logger.info("Web", `[调试] API 审批: ${reject ? '拒绝' : '批准'} ${approvalId}`);
+      const { handleOneBotApproval } = await import('@/approval');
+      const groupId = body.groupId || 0;
+      await handleOneBotApproval(approvalId, 0, groupId, reject);
+      sendJSON(res, { success: true, action: reject ? 'rejected' : 'approved' });
+      return;
+    }
+
     sendError(res, '未找到', 404);
   } catch (error) {
-    console.error('API 错误:', error);
+    logger.error("Web", 'API 错误:', error);
     sendError(res, '服务器内部错误', 500);
   }
 }
@@ -328,7 +421,7 @@ export function startWebServer(): http.Server {
   const cfg = getConfig();
 
   if (!cfg.webui.enabled) {
-      console.log('WebUI 已在配置中禁用');
+      logger.info("Web", 'WebUI 已在配置中禁用');
     const dummy = http.createServer();
     return dummy;
   }
@@ -352,9 +445,9 @@ export function startWebServer(): http.Server {
   });
 
   server.listen(cfg.webui.port, cfg.webui.host, () => {
-  console.log(`\nWebUI 访问地址: http://${cfg.webui.host}:${cfg.webui.port}`);
+  logger.info("Web", `\nWebUI 访问地址: http://${cfg.webui.host}:${cfg.webui.port}`);
   if (cfg.webui.password) {
-    console.log('WebUI 密码保护已启用');
+    logger.info("Web", 'WebUI 密码保护已启用');
     }
   });
 

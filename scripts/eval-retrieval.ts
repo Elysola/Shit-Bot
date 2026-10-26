@@ -9,11 +9,11 @@
 import * as sqliteVec from 'sqlite-vec';
 import { setConfigForTesting } from '../src/config';
 import { initDatabase } from '../src/storage';
-import { searchMemories, setVectorSearch } from '../src/ai/memory/retrieve';
-import { addMemory, type MemoryRow } from '../src/ai/memory/store';
-import { embedTexts } from '../src/ai/vector/embedder';
-import { embedPendingMemories, initVectors, memoryVectorSearch } from '../src/ai/vector/service';
-import { searchVectors, setVectorBackend, upsertVector } from '../src/ai/vector/store';
+import { searchMemories, setVectorSearch } from '../src/plugins/ai-chat/memory/retrieve';
+import { addMemory, type MemoryRow } from '../src/plugins/ai-chat/memory/store';
+import { embedTexts } from '../src/plugins/ai-chat/vector/embedder';
+import { embedPendingMemories, initVectors, memoryVectorSearch } from '../src/plugins/ai-chat/vector/service';
+import { searchVectors, setVectorBackend, upsertVector } from '../src/plugins/ai-chat/vector/store';
 
 const EMBED_URL = process.env.EMBED_URL || 'http://127.0.0.1:11434/v1';
 const EMBED_MODEL = process.env.EMBED_MODEL || 'bge-m3';

@@ -5,37 +5,49 @@
   "main": "dist/index.js",
   "packageManager": "bun",
   "scripts": {
-    "build": "tsc && cp src/web/ui.html dist/web/ui.html",
+    "build": "tsc && tsc-alias && cp src/web/ui.html dist/web/ui.html",
     "build:binary": "bun build src/index.ts --compile --outfile dist/shit-bot && cp src/web/ui.html dist/ui.html",
     "build:binary:docker": "docker run --rm -v $(pwd):/app -w /app oven/bun sh -c 'bun install && bun build src/index.ts --compile --outfile dist/shit-bot && cp src/web/ui.html dist/ui.html'",
     "start": "bun run dist/index.js",
-    "dev": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
     "test": "bun test src",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
-    "deploy": "bunx hugo && wrangler deploy",
-    "preview": "bunx hugo && wrangler dev"
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.3.1",
-    "https-proxy-agent": "^9.0.0",
-    "node-cron": "^3.0.3",
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "https-proxy-agent": "^9.1.0",
+    "jmcomic-crawler": "^2.7.5",
+    "node-cron": "^4.5.0",
     "node-emoji": "^2.2.0",
     "rss-parser": "^3.13.0",
-    "smol-toml": "^1.6.1",
-    "speakeasy": "^2.0.0",
+    "sharp": "^0.35.3",
+    "smol-toml": "^1.7.0",
     "sqlite-vec": "0.1.9",
+    "speakeasy": "^2.0.0",
     "telegraf": "^4.16.3",
     "twitter-openapi-typescript": "^0.0.56",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.5",
+    "@types/node": "^26.1.0",
     "@types/node-cron": "^3.0.11",
+    "@types/sharp": "^0.32.0",
     "@types/speakeasy": "^2.0.10",
     "bun-types": "^1.3.14",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.3",
-    "wrangler": "^4.98.0"
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.17",
+    "tsx": "^4.22.5",
+    "typescript": "^6.0.3",
+    "entities": "^7.0.1",
+    "vitepress": "^1.6.4",
+    "wrangler": "^4.107.0"
+  },
+  "patchedDependencies": {
+    "jmcomic-crawler@2.7.5": "patches/jmcomic-crawler@2.7.5.patch"
   }
 }

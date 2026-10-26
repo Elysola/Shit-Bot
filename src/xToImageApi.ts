@@ -1,5 +1,6 @@
-import { ProcessedTweet } from './types';
-import { getConfig } from './config';
+import { ProcessedTweet } from '@/types';
+import { getConfig } from '@/config';
+import { logger } from '@/logger';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [1000, 2000, 4000];
@@ -14,7 +15,7 @@ async function fetchWithRetry(url: string, headers: Record<string, string>, twee
     } catch (error) {
       lastError = error;
       if (attempt < MAX_RETRIES) {
-        console.warn(`X to Image API 第 ${attempt + 1} 次尝试失败, 推文 ${tweetId}, ${RETRY_DELAYS[attempt]}ms 后重试...`);
+        logger.warn("XToImage", `X to Image API 第 ${attempt + 1} 次尝试失败, 推文 ${tweetId}, ${RETRY_DELAYS[attempt]}ms 后重试...`);
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt]));
       }
     }
@@ -43,14 +44,14 @@ export async function fetchTweetImage(tweet: ProcessedTweet): Promise<Buffer | n
     const response = await fetchWithRetry(url.toString(), headers, tweet.id);
 
     if (!response.ok) {
-      console.error(`X to Image API 返回 ${response.status}: ${response.statusText}`);
+      logger.error("XToImage", `X to Image API 返回 ${response.status}: ${response.statusText}`);
       return null;
     }
 
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
   } catch (error) {
-    console.error(`从 X to Image API 获取图片失败, 推文 ${tweet.id}:`, error);
+    logger.error("XToImage", `从 X to Image API 获取图片失败, 推文 ${tweet.id}:`, error);
     return null;
   }
 }

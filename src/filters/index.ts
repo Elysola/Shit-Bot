@@ -1,4 +1,4 @@
-import { Tweet, FilterConfig, UserConfig, ProcessedTweet } from '../types';
+import { Tweet, FilterConfig, UserConfig, ProcessedTweet } from '@/types';
 
 export function applyFilters(tweet: Tweet, userConfig: UserConfig): ProcessedTweet {
   const filters = userConfig.filters;
@@ -131,8 +131,10 @@ function formatContentDiscord(content: string): string {
   );
 }
 
-export function formatContentForPlatform(content: string, platform: 'html' | 'discord'): string {
-  return platform === 'html' ? formatContentHTML(content) : formatContentDiscord(content);
+export function formatContentForPlatform(content: string, platform: 'html' | 'discord' | 'onebot'): string {
+  if (platform === 'html') return formatContentHTML(content);
+  if (platform === 'discord') return formatContentDiscord(content);
+  return content;
 }
 
 export function escapeHTML(text: string): string {

@@ -1,0 +1,17 @@
+diff --git a/package.json b/package.json
+index 51f4c30..a0dcc76 100644
+--- a/package.json
++++ b/package.json
+@@ -9,10 +9,12 @@
+   "exports": {
+     ".": {
+       "types": "./dist/index.d.ts",
++      "require": "./dist/index.js",
+       "import": "./dist/index.js"
+     },
+     "./cli": {
+       "types": "./dist/cli.d.ts",
++      "require": "./dist/cli.js",
+       "import": "./dist/cli.js"
+     }
+   },

@@ -1,7 +1,8 @@
 import { TwitterOpenApi, TwitterOpenApiClient } from 'twitter-openapi-typescript';
 import { TweetApiUtilsData, UserApiUtilsData } from 'twitter-openapi-typescript/dist/src/models';
-import { getConfig, getEffectiveGroups } from '../config';
-import { Tweet, UserConfig } from '../types';
+import { getConfig, getEffectiveGroups } from '@/config';
+import { Tweet, UserConfig } from '@/types';
+import { logger } from '@/logger';
 
 let client: TwitterOpenApiClient | null = null;
 const userIdCache = new Map<string, string>();
@@ -27,20 +28,20 @@ export async function initTwitterClient(): Promise<boolean> {
         ct0,
         auth_token: authToken,
       });
-      console.log('Twitter API 客户端已初始化 (Cookie 认证)');
+      logger.info("Twitter", "Twitter API 客户端已初始化 (Cookie 认证)");
       return true;
     } catch (error) {
-      console.error('Twitter 客户端 Cookie 初始化失败:', error);
+      logger.error("Twitter", "Twitter 客户端 Cookie 初始化失败:", error);
       client = null;
     }
   }
 
   try {
     client = await api.getGuestClient();
-    console.log('Twitter API 客户端已初始化 (访客模式)');
+    logger.info("Twitter", "Twitter API 客户端已初始化 (访客模式)");
     return true;
   } catch (error) {
-    console.error('Twitter 访客客户端初始化失败:', error);
+    logger.error("Twitter", "Twitter 访客客户端初始化失败:", error);
     client = null;
     return false;
   }
@@ -56,7 +57,7 @@ export async function getUserIdByUsername(username: string): Promise<string | nu
   }
 
   if (!client) {
-    console.error('Twitter 客户端未初始化');
+    logger.error("Twitter", "Twitter 客户端未初始化");
     return null;
   }
 
@@ -64,14 +65,14 @@ export async function getUserIdByUsername(username: string): Promise<string | nu
     const response = await client.getUserApi().getUserByScreenName({ screenName: username });
     const user = response.data.user;
     if (!user) {
-      console.warn(`用户 @${username} 未找到`);
+      logger.warn("Twitter", `用户 @${username} 未找到`);
       return null;
     }
 
     userIdCache.set(username, user.restId);
     return user.restId;
   } catch (error) {
-    console.error(`获取 @${username} 的用户 ID 失败:`, error);
+    logger.error("Twitter", `获取 @${username} 的用户 ID 失败:`, error);
     return null;
   }
 }
@@ -130,7 +131,7 @@ function convertToTweet(tweetData: TweetApiUtilsData, userConfig: UserConfig): T
 
 export async function fetchTweetsForUser(userConfig: UserConfig): Promise<Tweet[]> {
   if (!client) {
-    console.error('Twitter 客户端未初始化');
+    logger.error("Twitter", "Twitter 客户端未初始化");
     return [];
   }
 
@@ -139,7 +140,7 @@ export async function fetchTweetsForUser(userConfig: UserConfig): Promise<Tweet[
   try {
     const userId = await getUserIdByUsername(userConfig.username);
     if (!userId) {
-      console.warn(`未找到用户 @${userConfig.username} 的 ID`);
+      logger.warn("Twitter", `未找到用户 @${userConfig.username} 的 ID`);
       return [];
     }
 
@@ -161,7 +162,7 @@ export async function fetchTweetsForUser(userConfig: UserConfig): Promise<Tweet[
 
     return tweets;
   } catch (error) {
-    console.error(`获取 @${userConfig.username} 的推文失败:`, error);
+    logger.error("Twitter", `获取 @${userConfig.username} 的推文失败:`, error);
     return [];
   }
 }
@@ -185,7 +186,7 @@ export async function fetchAllTweets(): Promise<Map<string, Tweet[]>> {
     results.set(username, tweets);
 
     if (tweets.length > 0) {
-      console.log(`从 @${username} 获取到 ${tweets.length} 条推文`);
+      logger.info("Twitter", `从 @${username} 获取到 ${tweets.length} 条推文`);
     }
   }
 

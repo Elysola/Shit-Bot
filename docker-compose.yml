@@ -1,6 +1,6 @@
 services:
   shit-bot:
-    image: ghcr.io/recloudstudio/shit-bot:latest
+    image: ghcr.io/elysola/shit-bot:latest
     container_name: shit-bot
     restart: unless-stopped
     ports:
@@ -8,5 +8,6 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./data:/app/data
+      # - ./plugins:/app/data/plugins   # 外部插件目录（可选）
     environment:
       - TZ=Asia/Shanghai

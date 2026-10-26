@@ -1,7 +1,8 @@
-import { Tweet, UserConfig } from '../types';
-import { getConfig } from '../config';
-import { isAlreadySent, isTooOld, markAsSent } from '../storage';
-import { fetchTweetsForUser as fetchTweetsViaApi, fetchAllTweets as fetchAllTweetsViaApi } from '../twitter/client';
+import { Tweet, UserConfig } from '@/types';
+import { getConfig } from '@/config';
+import { isAlreadySent, isTooOld, markAsSent } from '@/storage';
+import { fetchTweetsForUser as fetchTweetsViaApi, fetchAllTweets as fetchAllTweetsViaApi } from '@/twitter/client';
+import { logger } from '@/logger';
 
 export async function fetchTweetsForUser(user: UserConfig): Promise<Tweet[]> {
   const config = getConfig();
@@ -24,7 +25,7 @@ export async function fetchTweetsForUser(user: UserConfig): Promise<Tweet[]> {
 
     return filteredTweets;
   } catch (error) {
-    console.error(`获取 @${user.username} 的推文失败:`, error);
+    logger.error("RSS", `获取 @${user.username} 的推文失败:`, error);
     return [];
   }
 }

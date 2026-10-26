@@ -8,16 +8,17 @@
  */
 import * as fs from 'fs';
 import { parse as parseYaml } from 'yaml';
-import { describeRelationshipForUser, getRelationship } from '../src/ai/affinity';
-import { registerAffinityAndMood } from '../src/ai/appraise';
-import { handleAiCommand } from '../src/ai/commands';
-import { registerExtraction, runExtractWindow } from '../src/ai/memory/extract';
-import { listMemories } from '../src/ai/memory/store';
-import { currentMood, moodLabel } from '../src/ai/mood';
-import { personaForGuild } from '../src/ai/persona/loader';
-import { drainJobs } from '../src/ai/worker';
-import { initDiscordAiChat, useDiscordClientForTesting } from '../src/bots/discord';
-import { settleProactiveForTesting } from '../src/bots/discord-proactive';
+import { describeRelationshipForUser, getRelationship } from '../src/plugins/ai-chat/affinity';
+import { registerAffinityAndMood } from '../src/plugins/ai-chat/appraise';
+import { handleAiCommand } from '../src/plugins/ai-chat/commands';
+import { registerExtraction, runExtractWindow } from '../src/plugins/ai-chat/memory/extract';
+import { listMemories } from '../src/plugins/ai-chat/memory/store';
+import { currentMood, moodLabel } from '../src/plugins/ai-chat/mood';
+import { personaForGuild } from '../src/plugins/ai-chat/persona/loader';
+import { drainJobs } from '../src/plugins/ai-chat/worker';
+import { useDiscordClientForTesting } from '../src/bots/discord';
+import { initDiscordAiChat } from '../src/plugins/ai-chat/discord-chat';
+import { settleProactiveForTesting } from '../src/plugins/ai-chat/discord-proactive';
 import { CHANNEL_ID, GUILD_ID, SELF_ID, setupAiTest } from '../src/testing/fixtures';
 import { fakeChannel, fakeClient, fakeInteraction, fakeMessage, type FakeAuthor, type FakeMessage } from '../src/testing/discord-fakes';
 
