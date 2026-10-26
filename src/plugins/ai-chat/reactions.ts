@@ -3,6 +3,8 @@ import { emojify } from 'node-emoji';
 export interface ReplyPayload {
   reply: string;
   reactions: string[];
+  /** 本轮上下文/工具结果里出现过的用户 ID：回复里写 <@ID> 时只允许提醒这些人 */
+  mentionableIds?: string[];
 }
 
 const ALIAS: Record<string, string> = {

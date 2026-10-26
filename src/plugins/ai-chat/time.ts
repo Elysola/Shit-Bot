@@ -20,3 +20,8 @@ export function formatUtc8(ms: number): string {
 export function nowUtc8(): string {
   return formatUtc8(Date.now());
 }
+
+/** epoch 毫秒对应的 UTC+8 日期 "YYYY-MM-DD"，用作按天统计的键。 */
+export function dayKeyUtc8(ms: number): string {
+  return formatUtc8(ms).slice(0, 10);
+}

@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { parse as parseToml } from 'smol-toml';
 import { logger } from '@/logger';
-import { AppConfig, GroupConfig } from '@/types';
+import { AppConfig, DiscordConfig, GroupConfig, PrivilegedIntentMode } from '@/types';
 
 /** 把配置里的数值安全转成 [min,max] 内的有限整数；非法(NaN/负数/超大/非数字)时回退默认值。
  *  防止坏配置(尤其经 WebUI 保存)把 SQLite LIMIT 变成负数=无限读、或让工具循环/各类上限失控。 */
@@ -18,6 +18,24 @@ function clampFloat(v: unknown, def: number, min: number, max: number): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
   if (!Number.isFinite(n)) return def;
   return Math.max(min, Math.min(n, max));
+}
+
+function obj(v: unknown): Record<string, any> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : {};
+}
+
+function oneOf<T extends string>(v: unknown, allowed: readonly T[], def: T): T {
+  return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : def;
+}
+
+const INTENT_MODES: readonly PrivilegedIntentMode[] = ['auto', 'on', 'off'];
+
+export function normalizePrivilegedIntents(raw: unknown): DiscordConfig['privilegedIntents'] {
+  const p = obj(raw);
+  return {
+    members: oneOf(p.members, INTENT_MODES, 'auto'),
+    presences: oneOf(p.presences, INTENT_MODES, 'auto'),
+  };
 }
 
 const CONFIG_CANDIDATES = [
@@ -92,20 +110,37 @@ export function loadConfig(configPath?: string): AppConfig {
 
   const filePath = configPath || findConfigFile();
   rawConfigData = parseConfigFile(filePath);
-  const rawConfig = rawConfigData;
   loadedConfigPath = filePath;
 
+  const loadedConfig = buildConfig(rawConfigData);
+
+  validateConfig(loadedConfig);
+  config = loadedConfig;
+  logger.info('Config', `配置已从 ${filePath} 加载`);
+  return config;
+}
+
+/** 测试专用：用给定的原始配置直接构造并替换当前配置（不读文件、不做 validateConfig 的强校验）。 */
+export function setConfigForTesting(raw: Record<string, any>): AppConfig {
+  rawConfigData = raw;
+  loadedConfigPath = null;
+  config = buildConfig(raw);
+  return config;
+}
+
+function buildConfig(rawConfig: Record<string, any>): AppConfig {
   const proxyUrl = rawConfig.proxy || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 
   const debugMode = rawConfig.debugMode ?? (process.env.DEBUG_MODE === 'true' || process.env.DEBUG_MODE === '1');
 
-  const loadedConfig = {
+  return {
     ...rawConfig,
     debugMode,
     proxy: proxyUrl,
     discord: {
       ...rawConfig.discord,
       token: process.env.DISCORD_TOKEN || rawConfig.discord?.token,
+      privilegedIntents: normalizePrivilegedIntents(rawConfig.discord?.privilegedIntents),
     },
     telegram: {
       ...rawConfig.telegram,
@@ -138,11 +173,6 @@ export function loadConfig(configPath?: string): AppConfig {
     xToImageApiToken: process.env.X_TO_IMAGE_API_TOKEN || rawConfig.xToImageApiToken,
     xToImageApiTheme: process.env.X_TO_IMAGE_API_THEME as 'light' | 'dim' | 'dark' | undefined || rawConfig.xToImageApiTheme,
   } as AppConfig;
-
-  validateConfig(loadedConfig);
-  config = loadedConfig;
-  logger.info('Config', `配置已从 ${filePath} 加载`);
-  return config;
 }
 
 function validateConfig(cfg: AppConfig): void {

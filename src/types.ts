@@ -34,12 +34,20 @@ export interface UserConfig {
   filters?: FilterConfig;
 }
 
+/** auto = 登录前读取应用标志位，后台开了就订阅；on = 强制订阅；off = 不订阅 */
+export type PrivilegedIntentMode = 'auto' | 'on' | 'off';
+
 export interface DiscordConfig {
   enabled: boolean;
   token: string;
   adminChannelId?: string;
   approveRoleId?: string;
   embedColor?: string;
+  /** 两个特权 intent（成员事件、在线状态）的订阅方式，只在登录前决定一次 */
+  privilegedIntents: {
+    members: PrivilegedIntentMode;
+    presences: PrivilegedIntentMode;
+  };
 }
 
 export interface TelegramTarget {

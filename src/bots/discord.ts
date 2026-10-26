@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, TextChannel, EmbedBuilder, AttachmentBuilder, Message, REST, Routes, ChatInputCommandInteraction, MessageFlags } from 'discord.js';
+import { Client, TextChannel, EmbedBuilder, AttachmentBuilder, Message, REST, Routes, ChatInputCommandInteraction, MessageFlags, Partials } from 'discord.js';
 import { ProcessedTweet } from '@/types';
 import { getConfig } from '@/config';
 import { formatContentForPlatform } from '@/filters';
@@ -6,10 +6,32 @@ import { renderTweetImage } from '@/renderer';
 import { storeSentMessage, getRecentSentMessages, deleteSentMessage, getSentMessageByMessageId } from '@/storage';
 import { getPluginDiscordCommands } from '@/plugins';
 import { logger } from '@/logger';
+import { buildIntents, decidePrivilegedIntents, isDisallowedIntentsError, type PrivilegedIntents } from '@/bots/discord-intents';
 
 
 let client: Client | null = null;
 let targetChannel: TextChannel | null = null;
+let privileged: PrivilegedIntents = { members: false, presences: false };
+
+/** 这次登录实际订阅到的特权 intent（插件据此决定要不要同步成员、读在线状态） */
+export function getPrivilegedIntents(): PrivilegedIntents {
+  return privileged;
+}
+
+function createClient(p: PrivilegedIntents): Client {
+  return new Client({
+    intents: buildIntents(p),
+    // 编辑/删除/表情反应可能发生在未缓存的消息上，需要 partial 才能收到事件
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User, Partials.GuildMember],
+  });
+}
+
+async function login(c: Client, token: string): Promise<void> {
+  await Promise.race([
+    c.login(token),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Discord 登录超时 (30s)')), 30000)),
+  ]);
+}
 
 function callWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -30,6 +52,13 @@ export function getDiscordClient(): Client | null {
   return client;
 }
 
+/** 测试用：换成一个假的客户端（不登录 Discord），之后插件照常挂上消息处理 */
+export function useDiscordClientForTesting(c: Client | null, p: PrivilegedIntents = { members: false, presences: false }): void {
+  client = c;
+  privileged = p;
+  targetChannel = null;
+}
+
 export async function initDiscord(): Promise<boolean> {
   const config = getConfig();
 
@@ -38,29 +67,43 @@ export async function initDiscord(): Promise<boolean> {
     return false;
   }
 
-    logger.info("Discord", "正在初始化 Discord 客户端...");
+  logger.info("Discord", "正在初始化 Discord 客户端...");
+
+  // 特权 intent 自适配：登录前读应用标志位，后台开了什么就订阅什么
+  const decision = await decidePrivilegedIntents(config.discord.token, config.discord.privilegedIntents);
+  privileged = { members: decision.members, presences: decision.presences };
 
   try {
-    client = new Client({
-      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-    });
-
-    await Promise.race([
-      client.login(config.discord.token),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Discord 登录超时 (30s)')), 30000)
-      ),
-    ]);
-
-    logger.info("Discord", "Discord bot 已连接 (群组指定目标频道)");
-
-    return true;
+    client = createClient(privileged);
+    await login(client, config.discord.token);
   } catch (error) {
-    logger.error("Discord", "Discord 初始化失败:", error);
-    client = null;
-    targetChannel = null;
-    return false;
+    if ((privileged.members || privileged.presences) && isDisallowedIntentsError(error)) {
+      // 配置强制开启、或标志位与实际不符：去掉特权 intent 再试一次，保证 bot 能上线
+      logger.warn("Discord", "申请的特权 intent 未在开发者后台开启，去掉后重新登录");
+      await client?.destroy().catch(() => {});
+      privileged = { members: false, presences: false };
+      try {
+        client = createClient(privileged);
+        await login(client, config.discord.token);
+      } catch (retryError) {
+        logger.error("Discord", "Discord 初始化失败:", retryError);
+        client = null;
+        targetChannel = null;
+        return false;
+      }
+    } else {
+      logger.error("Discord", "Discord 初始化失败:", error);
+      client = null;
+      targetChannel = null;
+      return false;
+    }
   }
+
+  logger.info(
+    "Discord",
+    `Discord bot 已连接 (群组指定目标频道)；特权 intent：成员事件=${privileged.members ? '开' : '关'}，在线状态=${privileged.presences ? '开' : '关'}`
+  );
+  return true;
 }
 
 export async function sendToDiscord(tweet: ProcessedTweet, channelId?: string, asImage?: boolean, preRenderedImage?: Buffer, approvalId?: string): Promise<Message | null> {

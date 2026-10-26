@@ -212,3 +212,5 @@ groups:
 | `AI_API_URL` | `plugins[].options.apiUrl` |
 | `AI_API_KEY` | `plugins[].options.apiKey` |
 | `AI_WEB_SEARCH_API_KEY` | `plugins[].options.webSearch.apiKey` |
+| `AI_EXTRACTOR_API_KEY` | `plugins[].options.memory.extractor.apiKey` |
+| `AI_EMBEDDING_API_KEY` | `plugins[].options.embedding.apiKey` |

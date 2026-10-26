@@ -1,11 +1,11 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getConfig, saveConfig, reloadConfig, getEffectiveGroups } from '@/config';
+import { getConfig, saveConfig, reloadConfig, getEffectiveGroups, normalizePrivilegedIntents } from '@/config';
 import { getRecentTweets, getSentCount } from '@/storage';
 import { getLoadedPlugins } from '@/plugins';
 import { sendForApproval } from '@/approval';
-import { AppConfig, GroupConfig, ProcessedTweet } from '@/types';
+import { AppConfig, GroupConfig, PluginConfigEntry, ProcessedTweet } from '@/types';
 import { logger } from '@/logger';
 
 interface IncomingMessage extends http.IncomingMessage {
@@ -50,6 +50,53 @@ function requireAuth(_req: IncomingMessage, res: http.ServerResponse): boolean {
   return false;
 }
 
+const MASK = '••••••••';
+// 插件配置里的密钥字段（如 ai-chat 的 apiKey、webSearch.apiKey、memory.extractor.apiKey、embedding.apiKey）
+const SECRET_KEY = /(apikey|token|secret|password)$/i;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** 递归把密钥字段换成掩码（有值才掩码，空值保持空） */
+function maskSecrets(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(maskSecrets);
+  if (!isPlainObject(v)) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v)) {
+    out[k] = SECRET_KEY.test(k) && typeof val === 'string' ? (val ? MASK : '') : maskSecrets(val);
+  }
+  return out;
+}
+
+/** 保存时：掩码或空值视为"不修改"，换回原来的值 */
+function restoreSecrets(incoming: unknown, prev: unknown): unknown {
+  // 数组按下标对应还原（maskSecrets 也会进入数组）
+  if (Array.isArray(incoming)) {
+    const before = Array.isArray(prev) ? prev : [];
+    return incoming.map((v, i) => restoreSecrets(v, before[i]));
+  }
+  if (!isPlainObject(incoming)) return incoming;
+  const before = isPlainObject(prev) ? prev : {};
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(incoming)) {
+    if (SECRET_KEY.test(k) && (val === MASK || val === '') && typeof before[k] === 'string') out[k] = before[k];
+    else out[k] = restoreSecrets(val, before[k]);
+  }
+  return out;
+}
+
+export function maskPlugin(p: PluginConfigEntry): PluginConfigEntry {
+  return p.options ? { ...p, options: maskSecrets(p.options) as Record<string, any> } : p;
+}
+
+export function restorePlugins(incoming: PluginConfigEntry[], prev: PluginConfigEntry[]): PluginConfigEntry[] {
+  return incoming.map((p) => {
+    const old = prev.find((x) => x.name === p.name);
+    return p.options && old?.options ? { ...p, options: restoreSecrets(p.options, old.options) as Record<string, any> } : p;
+  });
+}
+
 function sanitizeConfigForAPI(cfg: AppConfig): any {
   return {
     users: [],
@@ -65,7 +112,7 @@ function sanitizeConfigForAPI(cfg: AppConfig): any {
       totpSecret: cfg.twitter.totpSecret ? '••••••••' : '',
     },
     webui: { ...cfg.webui, password: cfg.webui.password ? '••••••••' : '' },
-    plugins: cfg.plugins || [],
+    plugins: (cfg.plugins || []).map(maskPlugin),
     enableApproval: cfg.enableApproval,
     sendAsImage: cfg.sendAsImage,
     xToImageApiUrl: cfg.xToImageApiUrl,
@@ -121,7 +168,9 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
       const cfg = getConfig();
 
       if (body.discord !== undefined) {
-        cfg.discord = { ...cfg.discord, ...body.discord };
+        // privilegedIntents 是嵌套对象：只改请求里给出的那一项，另一项保持原值（否则重启后会变回 auto）
+        const intents = { ...cfg.discord.privilegedIntents, ...(body.discord.privilegedIntents ?? {}) };
+        cfg.discord = { ...cfg.discord, ...body.discord, privilegedIntents: normalizePrivilegedIntents(intents) };
         if (body.discord.token === '••••••••' || body.discord.token === '') {
           delete (body.discord as any).token;
         }
@@ -161,7 +210,7 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
       if (body.maxPostsPerFetch !== undefined) cfg.maxPostsPerFetch = body.maxPostsPerFetch;
       if (body.maxTweetAgeMinutes !== undefined) cfg.maxTweetAgeMinutes = body.maxTweetAgeMinutes;
       if (body.groups !== undefined) cfg.groups = body.groups;
-      if (body.plugins !== undefined) cfg.plugins = body.plugins;
+      if (body.plugins !== undefined) cfg.plugins = Array.isArray(body.plugins) ? restorePlugins(body.plugins, cfg.plugins || []) : cfg.plugins;
 
       saveConfig(cfg);
       sendJSON(res, { success: true });
@@ -291,7 +340,7 @@ async function handleAPI(req: IncomingMessage, res: http.ServerResponse, urlPath
         description: p.manifest.description,
         author: p.manifest.author,
         enabled: p.config?.enabled !== false,
-        options: p.config?.options || {},
+        options: maskSecrets(p.config?.options || {}),
       })));
       return;
     }

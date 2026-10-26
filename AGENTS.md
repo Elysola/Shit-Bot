@@ -9,21 +9,37 @@
 ## Commands
 
 ```bash
-bun install          # install deps
-bun run dev          # tsx src/index.ts (hot-reload dev server)
+bun install          # install deps (applies patches/ via patchedDependencies)
+bun run dev          # bun run --watch src/index.ts
 bun run build        # tsc && tsc-alias && cp src/web/ui.html dist/web/ui.html
-bun run start        # node dist/index.js
+bun run start        # bun run dist/index.js  (needs Bun: the code uses bun:sqlite)
+bun run build:binary # bun build --compile → dist/shit-bot (single-file binary)
+bun run test         # bun test src — unit/integration tests (*.test.ts next to the code)
+bun run typecheck    # tsc --noEmit -p tsconfig.test.json — type-checks src including tests
+bun run docs:dev     # vitepress dev docs
 ```
 
-Build copies `src/web/ui.html` into `dist/web/` because tsc does not copy non-`.ts` assets.
+Tests live next to the code as `src/**/*.test.ts`; `tsconfig.json` excludes them (and `src/testing/`) so they never land in `dist/`. Tests use `setupAiTest()` from `src/testing/fixtures.ts`: `setConfigForTesting(raw)` with the AI options under `plugins[ai-chat]`, `initDatabase(':memory:')` and the AI migrations. LLM calls are stubbed by replacing `globalThis.fetch`.
+
+Build copies `src/web/ui.html` into `dist/web/` because tsc does not copy non-`.ts` assets. Any other non-`.ts` asset the runtime needs must either be copied the same way or embedded as a TS string constant (the default persona card is `src/plugins/ai-chat/persona/default-memecat.ts`).
 
 ## Architecture
 
-- Single Node.js process, not serverless/Workers.
-- `src/index.ts` — entrypoint: loads config → inits SQLite, Twitter client, Discord/Telegram bots, cron scheduler, web server.
-- `src/config.ts` — config loader: reads first found file from `config.yaml > config.yml > config.toml > config.json`, merges env vars, validates.
-- `src/storage.ts` — `better-sqlite3` (native C++ addon). Two tables: `sent_tweets`, `image_cache`. DB at `data/bot.db`.
-- `src/bots/` — Discord (`discord.js`), Telegram (`telegraf`), and OneBot11 (QQ) clients.
+- Single Bun process, not serverless/Workers. (`wrangler.jsonc` and the `deploy`/`preview` scripts are unrelated to the bot runtime.)
+- `src/index.ts` — entrypoint: loads config → loads plugins (`init`) → `onConfigLoaded` → SQLite → renderer → Twitter client (optional) → Discord / Telegram / OneBot → slash commands (core + `onDiscordCommands`) → `onAfterInit` → web server → polling + plugin cron jobs.
+- `src/config.ts` — config loader: first match of `data/config.{yaml,yml,toml,json}`, then `config.{yaml,yml,toml,json}` in the project root; merges env vars; validates. `getConfig()` loads the real config file lazily when nothing is loaded yet — tests and scripts must call `setConfigForTesting()` first, or run from an isolated directory.
+- `src/storage.ts` — `bun:sqlite` (built into Bun, no native addon). DB at `<cwd>/data/bot.db`, WAL mode. Core tables only (`sent_tweets`, `image_cache`, `sent_messages`, `sent_tg_messages`, `sent_onebot_messages`, `pending_approvals`, `dead_letters`); plugins create their own.
+- `src/bots/` — Discord (`discord.js`), Telegram (`telegraf`) and OneBot11 (QQ) clients. `discord.ts` creates the client; `discord-intents.ts` decides the privileged intents (members / presences) from the application flags before login (`discord.privilegedIntents: auto|on|off`) and the client retries without them if Discord rejects the login.
+- `src/plugins/` — plugin system: `manager.ts` discovers built-in plugins (each sub-directory with an `index.ts`), GitHub plugins and `pluginsDir`, runs `init` and the hooks in `types.ts`.
+- `src/plugins/ai-chat/` — the AI persona (memecat) over an OpenAI-compatible `/chat/completions` API, **Discord only**. Options live in `plugins[ai-chat].options` (a legacy top-level `ai:` is still read) and are normalized by `config.ts` (`getAiConfig()`).
+  - Entry & Discord: `index.ts` (hooks: `onAfterInit` runs the AI migrations, loads personas / lore, registers pipelines, starts the worker and attaches handlers; `onDiscordCommands`; `onBeforeShutdown`), `discord-chat.ts` (message handler and direct replies; offers each message to other plugins via `onDiscordMessage` first), `discord-adapter.ts` / `discord-runtime.ts` (discord.js → ingest types, gateway events, member sync, history backfill, `channelQuoteGuard`), `discord-proactive.ts`, `discord-send.ts`.
+  - Chat: `chat.ts` (tool loop, image inlining, reply JSON + reactions), `context.ts` (persona prompt + core memory blocks), `tools.ts` (tool schemas + dispatch), `llm-client.ts` (shared HTTP client: retries/timeouts, per-purpose token accounting in `llm_usage`, `jsonCompletion` with `response_format` fallback), `websearch.ts`, `time.ts` (UTC+8).
+  - Data in: `ingest.ts` (every message → `messages`, keyed by user ID), `identity.ts` (users / members / name history), `mentions.ts` (`<@id>` → people), `history-sync.ts` (backfill / gap fill), `presence.ts`.
+  - Memory: `memory/` (store, retrieval, extraction windows, profiles, stats, slash commands), `vector/` (embedder + adaptive sqlite-vec / JS backend), `persona/` + `lore.ts` (hand-written layer).
+  - Relationship & behaviour: `affinity.ts`, `mood.ts`, `appraise.ts` (post-reply appraisal job), `proactive.ts` (interjection gate / score / judge / feedback).
+  - Jobs & lifecycle: `worker.ts` (persistent `jobs` queue + schedulers; job types are only claimed while their feature is enabled in the *runtime* config), `retention.ts`, `forget.ts` (`/forget-me`), `forget-guard.ts` (salted-hash tombstones that stop re-import of deleted messages + a "forget epoch" that async jobs check before writing), `untrusted.ts` (structural isolation of untrusted text in prompts), `command-registry.ts` + `*-commands.ts` (slash commands, imported via `commands.ts`).
+  - `db/` — versioned schema migrations for the AI tables (`schema.ts` holds the list, `migrate.ts` the runner, `meta.ts` a small `kv_meta` store). A failed migration only disables the AI memory features (`isAiSchemaReady()`), never the tweet pipeline. Append new migrations; never edit a released one.
+- User-facing AI docs live in `docs/plugins/ai-chat/` (vitepress). README only keeps a summary that links there — keep numbers and rules there consistent with the code when you change behaviour.
 - `src/twitter/` — X/Twitter API via `twitter-openapi-typescript`; supports cookie auth or username/password login with TOTP.
 - `src/approval.ts` — multi-admin approval flow (Telegram inline keyboard + Discord buttons + OneBot11 text commands).
 - `src/web/server.ts` — HTTP server on configurable port (default 3000). Serves `ui.html` + REST API for config CRUD.
@@ -81,10 +97,15 @@ OneBot11 使用文本命令进行审批：
 
 ## Key gotchas
 
-- `better-sqlite3` is a **native C++ module** — requires a C++ toolchain. Bun handles native modules; Node requires `node-gyp`.
-- Config file format is auto-detected by extension. Saving always writes back in the same format (YAML or JSON).
-- When editing config via API, masked secrets (`••••••••`) are treated as "no change" — the existing value is preserved.
-- Web UI: `fetchAllTweets` is defined in both `src/twitter/client.ts` and `src/rss/fetcher.ts`. The one used is from `twitter/client.ts` (imported in `index.ts`).
+- Use the `bun:sqlite` API (`db.run`, `db.query(...).get/all`, `db.prepare`, `db.transaction`) — not `better-sqlite3`.
+- `bun:sqlite`'s `.changes` includes rows changed by triggers. `messages` and `memories` have FTS sync triggers, so count rows with `SELECT COUNT(*)` before deleting instead of trusting `.changes` (it is fine as a `> 0` check).
+- `bun test` runs all files in one process: module-level state (registered job handlers, schedulers, caches) leaks between test files. Reset what you depend on in `beforeEach`, and don't assume a handler is unregistered.
+- Never run scripts that import `src/` or `dist/` from the project root against a real setup: an unset config makes `getConfig()` load the real `config.yaml`, and the DB is `<cwd>/data/bot.db`. Use `setConfigForTesting()` or an isolated working directory with its own config and `data/`.
+- Background jobs that call an LLM must re-check that their subject still exists (message not deleted, user not `/forget-me`'d or opted out) after the call returns and before writing.
+- Config file format is auto-detected by extension. Saving via the API writes back in the same format for YAML/JSON; a TOML config can be loaded but **not** saved (save throws). On `EROFS` (read-only mount in Docker) the save falls back to `data/`.
+- When editing config via API, masked secrets (`••••••••`) are treated as "no change" — the existing value is preserved. Core secrets are masked by hand in `sanitizeConfigForAPI`; inside plugin `options`, any key ending in `apiKey` / `token` / `secret` / `password` is masked and restored automatically.
+- New AI settings belong in `normalizeAiConfig()` (`src/plugins/ai-chat/config.ts`: defaults, clamps, env overrides) and in all three `config.example.*` files; a test checks that the examples match the defaults.
+- `fetchAllTweets` exists in both `src/twitter/client.ts` and `src/rss/fetcher.ts`; `index.ts` imports the `rss/fetcher.ts` one, which wraps the client version.
 
 ## jm-daily 插件 (JMComic 每日推荐)
 
@@ -98,7 +119,7 @@ OneBot11 使用文本命令进行审批：
 - 去重：`data/bot.db` 的 `jm_daily_sent` 表记录已发送的 album id，同一本子只发送一次（`historyDays` 默认 30 天清理）。
 - 目标解析：只发送 `options.targets` 里显式配置的目标（`telegram`/`discord`/`onebot`），**不回退到 `groups` 的频道**；未配置 `targets` 时定时任务和 `/jm` 命令都不发送。
 - 手动命令：`/jm <source> [数量]`（Telegram/OneBot 文本命令，Discord 为 `/jm` 斜杠命令），`source` 支持 `daily`/`week`/`month`/`monthly`/`popular`/`latest` 及中文别名（如 `/jm 月榜 10`）。手动命令不过滤去重（按请求发 top N），只发送到配置的 targets，并写入去重记录。Telegram 文本消息钩子（`onTelegramMessage`）在 `src/index.ts` 中接线；OneBot 消息钩子（`onOneBotMessage`）同样在 `src/index.ts` 接线（审批命令之前）；Discord 斜杠命令由插件自注册 `interactionCreate` 处理（同 ai-chat 模式），纯文本 `/jm` 依赖 ai-chat 的 `messageCreate` 监听器转发 `onDiscordMessage`。
-- 运行时必须是 **Bun**（`bun run dev` / `bun run dist/index.js`）：项目依赖 `bun:sqlite`，`node dist/index.js` 无法运行。AGENTS.md 中 dev 脚本描述已过时，见 `package.json`。
+- 运行时必须是 **Bun**（`bun run dev` / `bun run dist/index.js`）：项目依赖 `bun:sqlite`，`node dist/index.js` 无法运行。
 
 ## Import path convention
 
@@ -118,4 +139,5 @@ Configured via `tsconfig.json` `baseUrl` + `paths`. Built with `tsc` + `tsc-alia
 - No `enum` — use literal unions.
 - Public API functions must declare return types explicitly.
 - Files: `kebab-case.ts`.
-- All internal imports use `@/` alias (`@/config`, `@/ai/chat`, etc.). No relative paths like `../../foo`.
+- All internal imports use the `@/` alias; sibling files in the same directory may use `./x`. No `../../foo`.
+- Log through `logger` from `@/logger` (`logger.info('Module', ...)`), not `console`.
