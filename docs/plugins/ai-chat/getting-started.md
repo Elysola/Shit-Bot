@@ -43,16 +43,22 @@ telegram:
 discord:
   enabled: true
   token: YOUR_DISCORD_BOT_TOKEN
-ai:
-  enabled: true
-  apiUrl: https://api.openai.com/v1   # 任何 OpenAI 兼容接口
-  apiKey: sk-...                      # 也可以用环境变量 AI_API_KEY
-  model: gpt-4o-mini
-  maxTokens: 4096                     # 带"思考"的模型请给大一些，否则长回复会被截断
-  allowedGuildIds: ["你的服务器ID"]    # 空 = 所有服务器
-  memory:
+plugins:
+  - name: ai-chat
     enabled: true
+    options:
+      enabled: true
+      apiUrl: https://api.openai.com/v1   # 任何 OpenAI 兼容接口
+      apiKey: sk-...                      # 也可以用环境变量 AI_API_KEY
+      model: gpt-4o-mini
+      maxTokens: 4096                     # 带"思考"的模型请给大一些，否则长回复会被截断
+      allowedGuildIds: ["你的服务器ID"]    # 空 = 所有服务器
+      memory:
+        enabled: true
 ```
+
+> AI 是内置插件 `ai-chat`，配置写在 `plugins` 列表里这个插件的 `options` 下；本文里的配置路径（如 `memory.observe.enabled`）都相对于它。旧版写在顶层 `ai:` 下的配置仍然兼容（启动时会提示迁移）。
+
 
 > WebUI 目前没有 AI 设置界面，AI 相关配置请直接改配置文件（WebUI 保存其它设置时会原样保留它们）。配置文件是 TOML 时只能读取、不能从 WebUI 保存。
 
@@ -83,16 +89,16 @@ bun run build && bun run start
 
 | 想要 | 怎么做 |
 |---|---|
-| 省钱：后台任务用便宜的模型 | `ai.memory.extractor.model` / `apiUrl` / `apiKey`（提炼、画像、互动评估都用它）；`ai.proactive.judgeModel`（插话判断）。不填就沿用聊天模型 |
-| 限制后台提炼的花费 | `ai.memory.extractor.dailyTokenBudget`（默认 300 万 token）：提炼和画像每天用到这么多就顺延到第二天；互动评估和聊天的用量计入但不受它限制 |
-| 某些频道不观察、不记录 | `ai.memory.observe.channelDenylist`（频道或分类 ID） |
-| 只让它在某些频道插话 | `ai.proactive.channels`（白名单）/ `ai.proactive.denyChannels` |
-| 让它话多 / 话少 | 人设卡 `proactive.chattiness`（0–1）；或 `ai.proactive.threshold`（越大越少插话） |
-| 晚上别插话 | `ai.proactive.quietHours: "01:00-08:00"`（UTC+8）；不填时按人设卡作息，精力低于 0.2 的时段不插话 |
-| 关掉主动插话 / 好感 / 情绪 | `ai.proactive.enabled` / `ai.affinity.enabled` / `ai.mood.enabled` 设为 `false` |
-| 只回复、不被动观察 | `ai.memory.observe.enabled: false`：只记录叫到它的消息和它的回复，记忆只从这些对话里提炼；不做历史回望，主动插话也基本不会触发（它看不到群聊）。注意：同时开着频道总结（`ai.summary.enabled`）时，为了能总结，所有消息仍会入库，但不会被提炼 |
-| 原始消息只保留一段时间 | `ai.memory.observe.retentionDays: 90`（提炼出的记忆不受影响） |
-| 不同服务器用不同人格 | 在 `data/personas/` 再放一张卡，然后 `ai.persona.guilds: { "服务器ID": "卡的 id" }` |
+| 省钱：后台任务用便宜的模型 | `memory.extractor.model` / `apiUrl` / `apiKey`（提炼、画像、互动评估都用它）；`proactive.judgeModel`（插话判断）。不填就沿用聊天模型 |
+| 限制后台提炼的花费 | `memory.extractor.dailyTokenBudget`（默认 300 万 token）：提炼和画像每天用到这么多就顺延到第二天；互动评估和聊天的用量计入但不受它限制 |
+| 某些频道不观察、不记录 | `memory.observe.channelDenylist`（频道或分类 ID） |
+| 只让它在某些频道插话 | `proactive.channels`（白名单）/ `proactive.denyChannels` |
+| 让它话多 / 话少 | 人设卡 `proactive.chattiness`（0–1）；或 `proactive.threshold`（越大越少插话） |
+| 晚上别插话 | `proactive.quietHours: "01:00-08:00"`（UTC+8）；不填时按人设卡作息，精力低于 0.2 的时段不插话 |
+| 关掉主动插话 / 好感 / 情绪 | `proactive.enabled` / `affinity.enabled` / `mood.enabled` 设为 `false` |
+| 只回复、不被动观察 | `memory.observe.enabled: false`：只记录叫到它的消息和它的回复，记忆只从这些对话里提炼；不做历史回望，主动插话也基本不会触发（它看不到群聊）。注意：同时开着频道总结（`summary.enabled`）时，为了能总结，所有消息仍会入库，但不会被提炼 |
+| 原始消息只保留一段时间 | `memory.observe.retentionDays: 90`（提炼出的记忆不受影响） |
+| 不同服务器用不同人格 | 在 `data/personas/` 再放一张卡，然后 `persona.guilds: { "服务器ID": "卡的 id" }` |
 | 语义检索 | 配置向量模型，见下一节 |
 
 ### 7. 开启向量检索（可选）
@@ -107,10 +113,13 @@ docker exec ollama ollama pull bge-m3
 ```
 
 ```yaml
-ai:
-  embedding:
-    apiUrl: http://127.0.0.1:11434/v1
-    model: bge-m3
+plugins:
+  - name: ai-chat
+    options:
+      # ……其它选项……
+      embedding:
+        apiUrl: http://127.0.0.1:11434/v1   # bot 跑在 Docker 里时改成 host.docker.internal 或 compose 服务名
+        model: bge-m3
 ```
 
 重启后日志会显示 `[Vector] 后端：sqlite-vec（数据库内计算）` 或 `后端：JS`，并开始在后台给已有记忆补向量。
@@ -147,6 +156,7 @@ ai:
 | `/memory` | 查看它关于你的全部记忆（只有你能看到；多的时候发 `.md` 附件），每条带编号 |
 | `/forget id:` | 删除一条关于你的记忆（编号见 `/memory`） |
 | `/callme 称呼:` | 设定你希望被怎么称呼（留空 = 清除） |
+| `/pronouns 代词:` | 设定你的代词（她 / 他 / TA / they/them），bot 提到你时用它；留空查看，填"清除"清除 |
 | `/affinity` | 看看它现在对你是什么感觉（档位和印象，不显示数值） |
 | `/optout` | 不再记录你的消息、不再形成关于你的记忆（@ 它时仍会回复） |
 | `/optin` | 恢复记录 |

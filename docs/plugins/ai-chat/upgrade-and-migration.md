@@ -15,6 +15,31 @@
 
 5. 首次启动会做一次历史回望（每个频道最近 30 天），并在后台慢慢提炼记忆。旧版本的记忆在迁移后立即可用。
 
+## 配置搬到插件里
+
+AI 现在是内置插件 `ai-chat`，配置从顶层的 `ai:` 移到了 `plugins` 列表里这个插件的 `options` 下：
+
+```yaml
+# 旧
+ai:
+  enabled: true
+  model: gpt-4o-mini
+  memory:
+    enabled: true
+
+# 新
+plugins:
+  - name: ai-chat
+    enabled: true          # 插件开关：false = 完全不加载
+    options:               # 原来 ai: 下的内容整段搬过来
+      enabled: true
+      model: gpt-4o-mini
+      memory:
+        enabled: true
+```
+
+不搬也能用：插件配置里没有 `options` 时，会读旧的顶层 `ai:`，启动时打一条提示。两处都写了时以插件配置为准。
+
 ## 迁移做了什么
 
 数据库结构由版本化迁移管理（`schema_migrations` 表记录执行过的版本）。每个版本在**独立的事务**里执行：某个版本失败时整体回滚、不记录，后续版本不再执行，只会关闭 AI 记忆相关功能（日志里有原因），**推文推送照常工作**。修好问题后重启会从失败的版本继续。
@@ -36,7 +61,7 @@
 
 | 旧表 | 转换成 | 细节 |
 |---|---|---|
-| `ai_memories`（按用户名的键值记忆） | `memories` | 作为"关于某人的事实"导入；`preferred_name`、`location`、`birthday` 等白名单内的键变成 slot（单值属性），并从"希望被称呼为「翅膀」"这类句子里取出简短的值；重要度 = 旧 weight × 10；来源标记为 `legacy` |
+| `ai_memories`（按用户名的键值记忆） | `memories` | 作为"关于某人的事实"导入；`preferred_name`、`pronouns`（旧 `/pronouns` 设置的代词）、`location`、`birthday` 等白名单内的键变成 slot（单值属性），并从"希望被称呼为「翅膀」"这类句子里取出简短的值；重要度 = 旧 weight × 10；来源标记为 `legacy` |
 | `ai_conversations`（一对一对话日志） | `messages` | 每个用户一个虚拟频道 `legacy-dm:<用户名>`；用户的话记为该用户、bot 的话记为 AI 回复 |
 | `channel_messages`（频道消息日志，只有显示名） | `messages` | 作者 ID 暂时为空；服务器 ID 在运行时按频道补上；历史回望重新拉到同一条消息时补全作者 |
 | 以上三张表本身 | 改名为 `_legacy_ai_memories`、`_legacy_ai_conversations`、`_legacy_channel_messages` | 原样保留作备份；`/forget-me` 和保留期清理也会处理其中的原话 |
@@ -56,20 +81,20 @@
 
 ### 废弃的字段
 
-这些 `ai.memory.*` 字段已经不再生效（加载配置时日志会提示一次），可以删掉：
+这些 `memory.*` 字段已经不再生效（加载配置时日志会提示一次），可以删掉：
 
 | 废弃字段 | 对应的新配置 |
 |---|---|
-| `maxProfileItems` | `ai.memory.core.userPins`（每人置顶条数） |
-| `maxProfileChars` | `ai.memory.context.speakerChars`（说话人档案字数） |
-| `recentTurns` | `ai.memory.context.recentChannelMessages`（频道最近消息条数） |
+| `maxProfileItems` | `memory.core.userPins`（每人置顶条数） |
+| `maxProfileChars` | `memory.context.speakerChars`（说话人档案字数） |
+| `recentTurns` | `memory.context.recentChannelMessages`（频道最近消息条数） |
 | `recallLimit` | 由模型调用 `search_memory` 时自己指定 |
-| `logConversations` | `ai.memory.observe.enabled`（所有消息统一入库） |
-| `maxConversationsPerUser` | `ai.memory.observe.retentionDays`（原始消息保留天数） |
+| `logConversations` | `memory.observe.enabled`（所有消息统一入库） |
+| `maxConversationsPerUser` | `memory.observe.retentionDays`（原始消息保留天数） |
 
 ### 新增的配置段
 
-`ai.persona`、`ai.lore`、`ai.history`、`ai.memory.observe` / `extractor` / `core` / `context` / `tools`、`ai.embedding`、`ai.vector`、`ai.affinity`、`ai.mood`、`ai.proactive`，以及 `discord.privilegedIntents`。全部有默认值，示例配置（`config.example.yaml` / `.json` / `.toml`，三份内容一致）里每个字段都有注释。`ai.maxToolIterations` 的默认值从 8 改为 12。
+`persona`、`lore`、`history`、`memory.observe` / `extractor` / `core` / `context` / `tools`、`embedding`、`vector`、`affinity`、`mood`、`proactive`，以及 `discord.privilegedIntents`。全部有默认值，示例配置（`config.example.yaml` / `.json` / `.toml`，三份内容一致）里每个字段都有注释。`maxToolIterations` 的默认值从 8 改为 12。
 
 ### 行为变化
 
@@ -86,6 +111,7 @@
 |---|---|
 | `/memory` | 保留，内容变成完整的记忆档案（带编号） |
 | `/delete-memory key:` | 改为 `/forget id:`（编号见 `/memory`） |
+| `/pronouns pronouns:` | 保留，参数改名为 `代词:`；数据存进记忆系统（只有本人能设置），填"清除"可清除 |
 | — | 新增 `/callme`、`/affinity`、`/optout`、`/optin`、`/forget-me`、`/shh` |
 
 斜杠命令在启动时整批注册，旧命令会自动消失。

@@ -41,7 +41,7 @@
 
 ## 消息入库
 
-**范围**：`ai.allowedGuildIds` 里的服务器、所有可见频道（`ai.memory.observe.channelDenylist` 除外）、所有成员的消息，以及 bot 自己的发言。其他 bot 的消息不入库。关掉被动观察（`observe.enabled: false`）时只记叫到 bot 的消息和它的 AI 回复（开着频道总结时例外：所有消息仍入库供总结，但不提炼）。
+**范围**：`allowedGuildIds` 里的服务器、所有可见频道（`memory.observe.channelDenylist` 除外）、所有成员的消息，以及 bot 自己的发言。其他 bot 的消息不入库。关掉被动观察（`observe.enabled: false`）时只记叫到 bot 的消息和它的 AI 回复（开着频道总结时例外：所有消息仍入库供总结，但不提炼）。
 
 **身份**：一律按用户 ID 存，同时维护：
 

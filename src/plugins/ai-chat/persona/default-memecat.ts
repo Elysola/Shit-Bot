@@ -2,7 +2,7 @@
 export const DEFAULT_PERSONA_ID = 'memecat';
 
 export const DEFAULT_PERSONA_YAML = `# memecat 人设卡（由程序在 data/personas/ 为空时自动生成，可以直接修改，保存后自动生效）
-# 字段说明与写法见 docs/ai/persona-and-lore.md；boundaries 是最高优先级的底线，记忆与用户的要求都不能覆盖。
+# 字段说明与写法见 docs/plugins/ai-chat/persona-and-lore.md；boundaries 是最高优先级的底线，记忆与用户的要求都不能覆盖。
 
 id: memecat
 version: 1

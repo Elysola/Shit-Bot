@@ -1,8 +1,10 @@
 # memecat：Discord 里的 AI 群成员
 
-开启 `ai.enabled` 后，bot 在 Discord 里变成一个有固定人格的群成员（默认是猫娘 **memecat**）：被 @、被回复时说话，平时潜水观察，偶尔自己插一句；记得每个人说过的事，对不同的人态度不同，自己也有心情起伏。AI 只接入了 Discord，Telegram 端仍然只做推文推送。
+开启 AI 插件（`plugins[ai-chat].options.enabled`）后，bot 在 Discord 里变成一个有固定人格的群成员（默认是猫娘 **memecat**）：被 @、被回复时说话，平时潜水观察，偶尔自己插一句；记得每个人说过的事，对不同的人态度不同，自己也有心情起伏。AI 只接入了 Discord，Telegram 端仍然只做推文推送。
 
 ## 文档目录
+
+> AI 是内置插件 `ai-chat`，配置写在 `plugins` 列表里这个插件的 `options` 下；本文里的配置路径（如 `memory.observe.enabled`）都相对于它。旧版写在顶层 `ai:` 下的配置仍然兼容（启动时会提示迁移）。
 
 | 文档 | 给谁看 | 内容 |
 |---|---|---|

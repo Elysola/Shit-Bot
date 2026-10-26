@@ -15,7 +15,7 @@
 - **X/Twitter GraphQL API**: 直接获取推文，支持 Cookie 认证或密码登录
 - **过滤器**: 关键词包含/排除、媒体过滤、排除转推/回复
 - **插件系统**: 可热加载的插件框架，内置 AI 聊天、日志等插件
-- **AI 聊天**: 支持频道内 AI 对话（配置 AI provider）
+- **AI 角色（Discord）**: 人设卡 + 设定集、对每个成员的长期记忆、服务器记忆、好感度、情绪、主动插话、@ 解析、可选的向量检索
 - **Web UI**: 浏览器管理配置
 - **Logger**: 统一日志系统（DEBUG/INFO/WARN/ERROR）
 - **SQLite**: `better-sqlite3` 持久化存储
@@ -99,6 +99,9 @@ discord:
   token: "YOUR_DISCORD_BOT_TOKEN"
   adminChannelId: "管理频道ID"       # 审批命令频道
   approveRoleId: "审批角色ID"         # 可选，审批权限角色
+  privilegedIntents:                 # 特权 intent：auto = 按开发者后台的开关自动决定；on / off = 强制
+    members: auto                    # 成员列表（昵称、角色、进出服务器）
+    presences: auto                  # 在线状态、正在玩什么
 ```
 
 ### Telegram
@@ -170,23 +173,25 @@ groups:
         - "222222222"
 ```
 
-### AI 聊天插件
+### AI 角色插件（ai-chat）
+
+开启后，bot 在 Discord 里变成一个有固定人格的群成员（默认是猫娘 memecat）：被 @、被回复时说话，平时潜水观察，偶尔自己插一句；记得每个人说过的事，对不同的人态度不同，自己也有心情起伏。
 
 ```yaml
 plugins:
   - name: ai-chat
     enabled: true
-    config:
-      provider: "openai"
-      baseUrl: "https://api.openai.com/v1"
-      apiKey: "sk-..."
-      model: "gpt-4o"
-      systemPrompt: "你是一个有用的助手"
-      allowList:
-        - "服务器ID"                       # 允许 AI 聊天的 Discord 服务器
-      maxTokens: 1024
-      temperature: 0.7
+    options:
+      enabled: true
+      apiUrl: "https://api.openai.com/v1"   # 任何 OpenAI 兼容接口
+      apiKey: "sk-..."                      # 也可以用环境变量 AI_API_KEY
+      model: "gpt-4o-mini"
+      allowedGuildIds: ["服务器ID"]          # 空 = 所有服务器
+      memory:
+        enabled: true
 ```
+
+所有选项都有默认值，`config.example.yaml` 里逐条注释。旧版写在顶层 `ai:` 下的配置仍兼容。使用教程、人设卡写法、算法、升级迁移、运维与隐私见 [docs/plugins/ai-chat/](docs/plugins/ai-chat/index.md)。
 
 ## 审批流程
 
@@ -210,6 +215,8 @@ plugins:
 /recall message_id:<ID>   — 按消息 ID 撤回
 /recall link:<URL>        — 按链接撤回
 ```
+
+AI 插件开启时另有 `/memory` `/forget` `/callme` `/pronouns` `/affinity` `/shh` `/optout` `/optin` `/forget-me`，说明见 [使用教程](docs/plugins/ai-chat/getting-started.md)。
 
 ## 日志系统
 
@@ -250,6 +257,8 @@ plugins:
 - `pending_approvals` — 待审批记录
 - `image_cache` — 图片缓存
 
+AI 插件的表（消息、成员、记忆、好感、情绪、向量、后台任务等）由插件启动时的版本化迁移创建，见 [升级与数据迁移](docs/plugins/ai-chat/upgrade-and-migration.md)。
+
 ## 环境变量
 
 支持 `.env` 文件，环境变量会覆盖配置文件中的对应值。关键变量：
@@ -262,6 +271,7 @@ plugins:
 | `TWITTER_AUTH_TOKEN` | Twitter auth_token Cookie |
 | `TWITTER_CT0`        | Twitter ct0 Cookie        |
 | `DEBUG_MODE`         | `true` 启用调试日志       |
+| `AI_API_KEY`         | AI 聊天模型的密钥         |
 
 ## License
 

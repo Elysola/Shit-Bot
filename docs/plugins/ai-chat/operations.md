@@ -20,7 +20,7 @@
 | 每条消息（含全文索引） | 0.4–1 KB；10 万条约 40–100 MB |
 | 每条记忆 | 约 1 KB；带 1024 维向量约 5 KB（1 万条记忆约 50 MB） |
 
-控制体积：`ai.memory.observe.retentionDays`（原始消息保留天数，提炼出的记忆不受影响）。`/forget-me` 会整理全文索引并截断 WAL。
+控制体积：`memory.observe.retentionDays`（原始消息保留天数，提炼出的记忆不受影响）。`/forget-me` 会整理全文索引并截断 WAL。
 
 ### 模型用量
 
@@ -37,11 +37,11 @@
 
 | 手段 | 配置 |
 |---|---|
-| 后台任务用便宜的模型 | `ai.memory.extractor.model` / `apiUrl` / `apiKey`；`ai.proactive.judgeModel` |
-| 提炼和画像的每日 token 上限 | `ai.memory.extractor.dailyTokenBudget`（默认 300 万；提炼、画像、互动评估的用量都计入，用完后提炼和画像顺延到第二天；互动评估和聊天不受它限制） |
-| 插话判断次数上限 | `ai.proactive.maxJudgeCallsPerDay`（默认 400） |
-| 不观察某些频道 | `ai.memory.observe.channelDenylist` |
-| 完全不被动观察 | `ai.memory.observe.enabled: false`（只记和它的直接对话） |
+| 后台任务用便宜的模型 | `memory.extractor.model` / `apiUrl` / `apiKey`；`proactive.judgeModel` |
+| 提炼和画像的每日 token 上限 | `memory.extractor.dailyTokenBudget`（默认 300 万；提炼、画像、互动评估的用量都计入，用完后提炼和画像顺延到第二天；互动评估和聊天不受它限制） |
+| 插话判断次数上限 | `proactive.maxJudgeCallsPerDay`（默认 400） |
+| 不观察某些频道 | `memory.observe.channelDenylist` |
+| 完全不被动观察 | `memory.observe.enabled: false`（只记和它的直接对话） |
 
 所有调用按"日期 × 用途 × 模型"记在 `llm_usage` 表里，见[常用查询](#常用查询)。
 
@@ -136,7 +136,7 @@ sqlite3 data/bot.db "SELECT valence, arousal, cause, datetime(updated_at/1000, '
 
 ### 保留期
 
-`ai.memory.observe.retentionDays: N`：每天清理 N 天前的原始消息（包括升级前保留的旧消息表）和在线活动记录；历史回望也不再拉取更早的消息。提炼出来的记忆、画像、好感不受影响。
+`memory.observe.retentionDays: N`：每天清理 N 天前的原始消息（包括升级前保留的旧消息表）和在线活动记录；历史回望也不再拉取更早的消息。提炼出来的记忆、画像、好感不受影响。
 
 ### 成员告示模板
 

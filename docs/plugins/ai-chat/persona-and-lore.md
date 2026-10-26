@@ -15,7 +15,7 @@
 
 ### 从默认卡开始
 
-第一次启动时 `data/personas/` 为空，会自动写出 `memecat.yaml`。最省事的做法是直接改它；想换一个全新的角色，可以复制一份改名（文件名不重要，以里面的 `id` 为准），再把 `ai.persona.default` 改成新的 `id`。
+第一次启动时 `data/personas/` 为空，会自动写出 `memecat.yaml`。最省事的做法是直接改它；想换一个全新的角色，可以复制一份改名（文件名不重要，以里面的 `id` 为准），再把 `persona.default` 改成新的 `id`。
 
 一个最小的人设卡只需要 `name`，其它字段都有默认值；但写得越具体，角色越鲜明。
 
@@ -23,7 +23,7 @@
 
 | 字段 | 作用 | 写法建议 |
 |---|---|---|
-| `id` | 唯一标识（`ai.persona.default` / `guilds` 里引用它） | 小写英文 |
+| `id` | 唯一标识（`persona.default` / `guilds` 里引用它） | 小写英文 |
 | `name` | 名字 | |
 | `aliases` | 群友可能对它的叫法 | 主动插话靠它识别"有人叫它 / 在议论它"，提炼靠它识别"在聊 bot"。至少 2 个字，单字（如"猫"）会被忽略，避免误触发 |
 | `summary` | 一句话简介 | 插话判断这类短提示词只带这一句 |
@@ -85,11 +85,13 @@ proactive:
 ### 按服务器分配人设
 
 ```yaml
-ai:
-  persona:
-    default: memecat
-    guilds:
-      "123456789012345678": librarian    # 这个服务器用书记员
+plugins:
+  - name: ai-chat
+    options:
+      persona:
+        default: memecat
+        guilds:
+          "123456789012345678": librarian    # 这个服务器用书记员
 ```
 
 好感和情绪是**全局共享**的（同一个"灵魂"）：换了人设卡，它对每个人的感觉和当前心情仍然延续。自我记忆（它说过的观点、经历、承诺）则按人设卡分开存，不同角色不会串。
@@ -98,9 +100,9 @@ ai:
 
 - **太啰嗦**：在 `speech.style` 里写明"一般一两句话"，并在 `examples` 里放几组短回复；`speech.avoid` 加上"大段排比"。
 - **太像客服**：`identity` 强调"不是客服"，`avoid` 里列出客服腔。
-- **插话太多 / 太少**：先调 `proactive.chattiness`；还不够再调 `ai.proactive.threshold`（全局阈值，默认 0.35）。
-- **晚上太吵**：把 `mood.rhythm` 深夜的值调低（< 0.2 的时段不会主动插话），或者配置 `ai.proactive.quietHours`。
-- **好感涨得太快 / 太慢**：改 `appraisal` 的描述（评估模型照它判断）；单次和每日上限在 `ai.affinity` 里。
+- **插话太多 / 太少**：先调 `proactive.chattiness`；还不够再调 `proactive.threshold`（全局阈值，默认 0.35）。
+- **晚上太吵**：把 `mood.rhythm` 深夜的值调低（< 0.2 的时段不会主动插话），或者配置 `proactive.quietHours`。
+- **好感涨得太快 / 太慢**：改 `appraisal` 的描述（评估模型照它判断）；单次和每日上限在 `affinity` 里。
 
 ---
 
@@ -144,7 +146,7 @@ entries:
 
 ### 预算
 
-每轮带上的设定集总字数受 `ai.memory.context.loreChars`（默认 1000）限制，按 `priority` 从高到低放入。常驻条目请写得短一些；长的背景知识用关键词触发。
+每轮带上的设定集总字数受 `memory.context.loreChars`（默认 1000）限制，按 `priority` 从高到低放入。常驻条目请写得短一些；长的背景知识用关键词触发。
 
 ### 设定集 vs 记忆
 
