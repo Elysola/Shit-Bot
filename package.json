@@ -10,6 +10,8 @@
     "build:binary:docker": "docker run --rm -v $(pwd):/app -w /app oven/bun sh -c 'bun install && bun build src/index.ts --compile --outfile dist/shit-bot && cp src/web/ui.html dist/ui.html'",
     "start": "bun run dist/index.js",
     "dev": "bun run src/index.ts",
+    "test": "bun test src",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "deploy": "bunx hugo && wrangler deploy",
     "preview": "bunx hugo && wrangler dev"
   },
@@ -22,6 +24,7 @@
     "rss-parser": "^3.13.0",
     "smol-toml": "^1.6.1",
     "speakeasy": "^2.0.0",
+    "sqlite-vec": "0.1.9",
     "telegraf": "^4.16.3",
     "twitter-openapi-typescript": "^0.0.56",
     "yaml": "^2.9.0"
