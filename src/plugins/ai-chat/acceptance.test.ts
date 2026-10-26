@@ -174,7 +174,7 @@ describe('验收：启动', () => {
 
   test('斜杠命令齐全，且每一个都符合 Discord 的注册规则（任何一个不合规会导致整批注册失败）', () => {
     const defs = aiCommandDefinitions();
-    expect(defs.map((d) => d.name).sort()).toEqual(['affinity', 'callme', 'forget', 'forget-me', 'memory', 'optin', 'optout', 'shh']);
+    expect(defs.map((d) => d.name).sort()).toEqual(['affinity', 'callme', 'forget', 'forget-me', 'memory', 'optin', 'optout', 'pronouns', 'shh']);
     const NAME = /^[-_\p{L}\p{N}]{1,32}$/u;
     for (const d of defs) {
       expect(NAME.test(d.name) && d.name === d.name.toLowerCase()).toBe(true);

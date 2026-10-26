@@ -107,6 +107,45 @@ async function onCallMe(interaction: ChatInputCommandInteraction): Promise<void>
   await replyEphemeral(interaction, `好，以后叫你「${name}」。`);
 }
 
+async function onPronouns(interaction: ChatInputCommandInteraction): Promise<void> {
+  const userId = interaction.user.id;
+  upsertUser(userInfoFromDiscord(interaction.user), Date.now());
+  const value = (interaction.options.getString('代词') ?? '').trim();
+  const cur = activeSlot('user', userId, 'pronouns');
+  if (!value) {
+    await replyEphemeral(
+      interaction,
+      cur
+        ? `你当前的代词是「${cur.value ?? cur.content}」。用 \`/pronouns 代词:清除\` 可以清除。`
+        : '你还没有设置代词。用 `/pronouns 代词:她`（或 他、TA、they/them）来设置。'
+    );
+    return;
+  }
+  if (value === '清除') {
+    if (cur) deleteMemory(cur.id);
+    await replyEphemeral(interaction, '已清除你的代词设置。');
+    return;
+  }
+  if (value.length > 20 || forbiddenReason(value)) {
+    await replyEphemeral(interaction, '这个代词不太合适（太长或包含隐私信息），换一个吧。');
+    return;
+  }
+  addMemory({
+    scope: 'user',
+    subjectId: userId,
+    guildId: interaction.guildId,
+    kind: 'fact',
+    slot: 'pronouns',
+    value,
+    content: `希望别人用「${value}」来指代自己`,
+    importance: 7,
+    pinned: false,
+    origin: 'user',
+    sourceUserId: userId,
+  });
+  await replyEphemeral(interaction, `好，提到你时会用「${value}」。`);
+}
+
 defineAiCommand({ name: 'memory', description: '查看 bot 记得的关于你的所有事（只有你能看到）' }, onMemory);
 
 defineAiCommand(
@@ -125,4 +164,13 @@ defineAiCommand(
     options: [{ name: '称呼', description: '希望被叫的名字', type: 3, required: false, max_length: 32 }],
   },
   onCallMe
+);
+
+defineAiCommand(
+  {
+    name: 'pronouns',
+    description: '设置或查看你的代词，bot 提到你时会用它（填"清除"可清除）',
+    options: [{ name: '代词', description: '如 她、他、TA、they/them；留空 = 查看当前', type: 3, required: false, max_length: 20 }],
+  },
+  onPronouns
 );

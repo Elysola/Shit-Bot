@@ -454,6 +454,7 @@ export const AI_MIGRATIONS: readonly Migration[] = [
 /** 单值属性的白名单：同一主体同一 slot 只有一条有效记忆，新值会取代旧值（旧值保留为历史） */
 export const SLOT_WHITELIST: readonly string[] = [
   'preferred_name',
+  'pronouns',
   'gender',
   'birthday',
   'age_range',

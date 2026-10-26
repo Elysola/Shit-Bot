@@ -92,6 +92,8 @@ export function identityLines(userId: string, guildId: string | null, brief = fa
   const addr = addressOf(userId, guildId, { includeSensitive: viewerIsSelf });
 
   let line1 = `@${display} ｜ 称呼：${addr.address}（${ADDRESS_SOURCE_LABEL[addr.source]}）`;
+  const pronouns = activeSlot('user', userId, 'pronouns');
+  if (pronouns && (!pronouns.sensitive || viewerIsSelf)) line1 += ` ｜ 代词：${pronouns.value ?? pronouns.content}`;
   if (addr.aliases.length) {
     line1 += ` ｜ 群里也叫：${addr.aliases.map((a) => (a.by ? `${a.value}(${a.by})` : a.value)).join('、')}`;
   }
@@ -203,7 +205,7 @@ export function buildPersonCore(userId: string, o: PersonCoreOptions): string {
   sections.push(identityLines(userId, o.guildId, !isSpeaker, o.viewerId === userId));
   if (o.relationshipLines?.length) sections.push(o.relationshipLines);
 
-  const slots = activeRows(`scope = 'user' AND subject_id = ? AND slot IS NOT NULL AND slot != 'preferred_name'${sens}`, [userId], 12);
+  const slots = activeRows(`scope = 'user' AND subject_id = ? AND slot IS NOT NULL AND slot NOT IN ('preferred_name', 'pronouns')${sens}`, [userId], 12);
   if (slots.length && isSpeaker) sections.push(slots.map((r) => `- ${SLOT_LABEL[r.slot!] ?? r.slot}：${r.value ?? r.content}`));
 
   const pinned = activeRows(`scope = 'user' AND subject_id = ? AND pinned = 1 AND slot IS NULL AND kind != 'alias'${sens}`, [userId], isSpeaker ? 12 : 3);

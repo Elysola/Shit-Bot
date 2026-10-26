@@ -15,6 +15,7 @@ import { addressOf } from './dossier';
 import { forbiddenReason, looksSensitive } from './sensitive';
 import { emitAtmosphere, emitBotSentiment, type Atmosphere, type BotSentiment } from './signals';
 import {
+  SELF_ONLY_SLOTS,
   SLOT_LABEL,
   addMemory,
   getMemory,
@@ -233,7 +234,7 @@ export function extractionSystemPrompt(personaName: string, aliases: string[], m
     '2. 关于某个人（scope=user）：证据必须是 TA 本人说的，或者明确在说 TA（@了 TA、回复 TA、提到 TA 的名字或外号）。别人转述的也可以记，但 confidence 不超过 0.6。',
     '3. content 写一句能独立读懂的中文陈述，用名字/称呼指代人，不要写用户 ID；涉及时间的写清日期（如"10-29 要考六级"）。',
     '4. 能确定日期的事件/计划填 event_at（YYYY-MM-DD，UTC+8）；计划类填 valid_until（过了这天就没意义了）。',
-    `5. 单值属性用 set_slot，slot 只能是：${slots}；value 写简短取值。preferred_name 只能来自本人明确的要求（"叫我 X 就行"）。`,
+    `5. 单值属性用 set_slot，slot 只能是：${slots}；value 写简短取值。preferred_name、pronouns 只能来自本人明确的要求（"叫我 X 就行""用她来称呼我"）。`,
     `6. 别人对某人的叫法记为 kind=alias，value 写那个外号。群里对你（${personaName}${aliases.length ? `，也叫 ${aliases.join('、')}` : ''}）的叫法记为 scope=guild、kind=bot_alias，value 写叫法。`,
     '7. 已有记忆（带 #id）有补充或修正时用 update；情况变了（搬家、换工作、分手…）用 supersede；已经知道的不要重复记。没有新信息就输出空的 ops。',
     '8. 群里的公共信息（梗、规矩、群里发生的事、共同话题）记为 scope=guild，kind 用 lore/event/rule/meme/topic。两人之间的关系记为 scope=relation（subject、object 都填用户 ID），kind=relationship。',
@@ -529,7 +530,7 @@ function applySetSlot(op: RawOp, c: ApplyContext): void {
   if (!subject) return drop(c, 'unknown-subject');
   const proof = personEvidence(op, subject, c);
   if (!proof) return drop(c, 'no-evidence');
-  if (slot === 'preferred_name' && !proof.selfReported) return drop(c, 'preferred-name-hearsay');
+  if (SELF_ONLY_SLOTS.includes(slot) && !proof.selfReported) return drop(c, 'preferred-name-hearsay');
   const content = s(op.content).slice(0, 200) || `${SLOT_LABEL[slot] ?? slot}：${value}`;
   if (forbiddenReason(`${content} ${value}`)) return drop(c, 'forbidden');
   const sensitive = op.sensitive === true || slot === 'relationship_status' || slot === 'gender' || looksSensitive(`${content} ${value}`);
@@ -589,7 +590,7 @@ function applyUpdate(op: RawOp, c: ApplyContext, supersede: boolean): void {
     selfReported = ev.some((m) => m.author_id === row.subject_id);
     if (sensitive && !selfReported) return drop(c, 'sensitive-hearsay');
     // 称呼只能由本人决定：取代旧称呼和 set_slot 一样要本人的发言作证据
-    if (row.slot === 'preferred_name' && !selfReported) return drop(c, 'preferred-name-hearsay');
+    if (row.slot && SELF_ONLY_SLOTS.includes(row.slot) && !selfReported) return drop(c, 'preferred-name-hearsay');
   } else if (sensitive) {
     return drop(c, 'sensitive-guild');
   }

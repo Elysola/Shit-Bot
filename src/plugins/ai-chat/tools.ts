@@ -18,6 +18,7 @@ import {
   isValidKind,
   isValidSlot,
   KINDS_BY_SCOPE,
+  SELF_ONLY_SLOTS,
   updateMemory,
   type MemoryKind,
   type MemoryRow,
@@ -191,7 +192,7 @@ export function buildTools(opts: { memory?: boolean } = {}): OpenAITool[] {
         content: { type: 'string', description: '记忆内容（一句完整的陈述）' },
         kind: { type: 'string', enum: ALL_KINDS, description: '类型：关于人用 fact/preference/trait/event/plan/opinion/habit/alias；关于服务器用 lore/event/rule/meme/topic；关于你自己用 opinion/preference/experience/promise/habit' },
         importance: { type: 'integer', description: '重要程度 1-10（8 以上会进入核心档案），默认 5' },
-        slot: { type: 'string', enum: ['preferred_name', 'birthday', 'location', 'timezone', 'occupation', 'school', 'languages', 'pets', 'age_range', 'gender', 'relationship_status'], description: '单值属性（可选，同一属性的新值会取代旧值）' },
+        slot: { type: 'string', enum: ['preferred_name', 'pronouns', 'birthday', 'location', 'timezone', 'occupation', 'school', 'languages', 'pets', 'age_range', 'gender', 'relationship_status'], description: '单值属性（可选，同一属性的新值会取代旧值）' },
         value: { type: 'string', description: 'slot 或外号的简短取值（如称呼"阿伟"、外号"伟哥"、生日"10-29"）' },
         sensitive: { type: 'boolean', description: '涉及健康 / 疾病、性取向、宗教、政治、家庭矛盾、财务困境等私密信息时设为 true（只在和本人聊天时使用，只能记在本人自己的档案里）' },
       },
@@ -548,7 +549,7 @@ function toolRemember(args: Record<string, unknown>, ctx: ToolContext): string {
   const slot = str(args.slot) || null;
   if (slot && (scope !== 'user' || !isValidSlot(slot))) return `slot ${slot} 无效（只用于关于人的单值属性）。`;
   const aboutOther = scope === 'user' && subjectId !== ctx.userId;
-  if (aboutOther && slot === 'preferred_name') return '别人希望怎么被称呼只能由本人说了算，不能替别人设置。';
+  if (aboutOther && slot && SELF_ONLY_SLOTS.includes(slot)) return '别人希望怎么被称呼、用什么代词，只能由本人说了算，不能替别人设置。';
   // 和提炼器同一条规则：模型标了 sensitive 的、关键词命中的、性别 / 感情状况这类 slot 都算敏感
   const sensitive = args.sensitive === true || slot === 'gender' || slot === 'relationship_status' || looksSensitive(`${content} ${value ?? ''}`);
   if (sensitive && aboutOther) return '这是关于别人的敏感隐私（健康、性取向、宗教、政治、家庭、性别、感情状况等），只有本人说才能记。';

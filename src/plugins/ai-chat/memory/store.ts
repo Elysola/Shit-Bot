@@ -40,8 +40,12 @@ export const KIND_LABEL: Record<MemoryKind, string> = {
   relationship: '关系',
 };
 
+/** 只能由本人决定的单值属性：别人的转述、模型替别人写都不算 */
+export const SELF_ONLY_SLOTS: readonly string[] = ['preferred_name', 'pronouns'];
+
 export const SLOT_LABEL: Record<string, string> = {
   preferred_name: '希望的称呼',
+  pronouns: '代词',
   gender: '性别',
   birthday: '生日',
   age_range: '年龄段',

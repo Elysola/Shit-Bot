@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { upsertMember, upsertUser } from '@/plugins/ai-chat/identity';
 import { isOwnMemory, renderOwnMemories } from './commands';
-import { addMemory } from './store';
-import { GUILD_ID, memberInfo, setupAiTest, userInfo } from '@/testing/fixtures';
+import { activeSlot, addMemory } from './store';
+import { handleAiCommand } from '@/plugins/ai-chat/commands';
+import { GUILD_ID, SELF_ID, memberInfo, setupAiTest, userInfo } from '@/testing/fixtures';
+import { fakeChannel, fakeInteraction } from '@/testing/discord-fakes';
 
 const A = '100000000000000001';
 const B = '100000000000000002';
+
+/** 以 alice 的身份执行一条 AI 斜杠命令，返回回复文本 */
+async function runCommand(name: string, options: Record<string, string>): Promise<string> {
+  const ch = fakeChannel({ id: SELF_ID, username: 'memecat', bot: true });
+  const it = fakeInteraction(name, { id: A, username: 'alice', nickname: '阿丽' }, ch, options);
+  expect(await handleAiCommand(it)).toBe(true);
+  return it.replies.join('\n');
+}
 
 beforeEach(() => {
   setupAiTest();
@@ -36,5 +46,25 @@ describe('/memory', () => {
     const other = addMemory({ scope: 'user', subjectId: B, kind: 'fact', content: 'z', origin: 'tool' });
     const guild = addMemory({ scope: 'guild', subjectId: GUILD_ID, kind: 'meme', content: 'w', origin: 'tool' });
     expect([own, rel, other, guild].map((m) => isOwnMemory(m, A))).toEqual([true, true, false, false]);
+  });
+});
+
+describe('/pronouns（与远端的代词功能合并）', () => {
+  test('设置后出现在别人看到的档案里；留空查看；"清除"清除；别人不能替 TA 设置', async () => {
+    const { identityLines } = await import('./dossier');
+    const { executeTool } = await import('@/plugins/ai-chat/tools');
+    const set = await runCommand('pronouns', { 代词: '她' });
+    expect(set).toContain('她');
+    expect(activeSlot('user', A, 'pronouns')?.value).toBe('她');
+    expect(identityLines(A, GUILD_ID, true)[0]).toContain('代词：她');
+    expect(await runCommand('pronouns', {})).toContain('「她」');
+    const viaTool = await executeTool(
+      'remember',
+      JSON.stringify({ about: `<@${A}>`, kind: 'fact', slot: 'pronouns', value: '他', content: '用他' }),
+      { platform: 'discord', username: 'b', userId: B, guildId: GUILD_ID, personaId: 'memecat', people: [], seenUserIds: new Set() }
+    );
+    expect(viaTool).toContain('本人');
+    expect(await runCommand('pronouns', { 代词: '清除' })).toContain('已清除');
+    expect(activeSlot('user', A, 'pronouns')).toBeNull();
   });
 });
