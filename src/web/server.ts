@@ -71,6 +71,11 @@ function maskSecrets(v: unknown): unknown {
 
 /** 保存时：掩码或空值视为"不修改"，换回原来的值 */
 function restoreSecrets(incoming: unknown, prev: unknown): unknown {
+  // 数组按下标对应还原（maskSecrets 也会进入数组）
+  if (Array.isArray(incoming)) {
+    const before = Array.isArray(prev) ? prev : [];
+    return incoming.map((v, i) => restoreSecrets(v, before[i]));
+  }
   if (!isPlainObject(incoming)) return incoming;
   const before = isPlainObject(prev) ? prev : {};
   const out: Record<string, unknown> = {};
