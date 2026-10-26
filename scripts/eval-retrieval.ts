@@ -8,7 +8,8 @@
  */
 import * as sqliteVec from 'sqlite-vec';
 import { setConfigForTesting } from '../src/config';
-import { initDatabase } from '../src/storage';
+import { getDatabase, initDatabase } from '../src/storage';
+import { migrateAiSchema } from '../src/plugins/ai-chat/db/schema';
 import { searchMemories, setVectorSearch } from '../src/plugins/ai-chat/memory/retrieve';
 import { addMemory, type MemoryRow } from '../src/plugins/ai-chat/memory/store';
 import { embedTexts } from '../src/plugins/ai-chat/vector/embedder';
@@ -91,15 +92,23 @@ const QUERIES: Array<[string, string]> = [
 function setup(): void {
   setConfigForTesting({
     twitter: { enabled: false },
-    ai: {
-      enabled: true,
-      apiKey: 'x',
-      memory: { enabled: true },
-      embedding: { apiUrl: EMBED_URL, apiKey: 'ollama', model: EMBED_MODEL, batchSize: 16, timeoutMs: 120000 },
-      vector: { backend: 'auto' },
-    },
+    plugins: [
+      {
+        name: 'ai-chat',
+        enabled: true,
+        options: {
+          enabled: true,
+          apiKey: 'x',
+          memory: { enabled: true },
+          embedding: { apiUrl: EMBED_URL, apiKey: 'ollama', model: EMBED_MODEL, batchSize: 16, timeoutMs: 120000 },
+          vector: { backend: 'auto' },
+        },
+      },
+    ],
   });
   initDatabase(':memory:');
+  // AI 表由插件在启动时迁移；评测直接建
+  migrateAiSchema(getDatabase(), { quiet: true });
 }
 
 async function recallAt5(label: string, ids: Map<string, number>): Promise<number> {

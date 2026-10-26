@@ -22,9 +22,13 @@ import { settleProactiveForTesting } from '../src/plugins/ai-chat/discord-proact
 import { CHANNEL_ID, GUILD_ID, SELF_ID, setupAiTest } from '../src/testing/fixtures';
 import { fakeChannel, fakeClient, fakeInteraction, fakeMessage, type FakeAuthor, type FakeMessage } from '../src/testing/discord-fakes';
 
-const raw = parseYaml(fs.readFileSync('config.yaml', 'utf-8')) as { ai?: Record<string, unknown> };
-const ai = raw.ai ?? {};
-if (!ai.apiUrl || !ai.model) throw new Error('config.yaml 里没有 ai.apiUrl / ai.model');
+const raw = parseYaml(fs.readFileSync('config.yaml', 'utf-8')) as {
+  ai?: Record<string, unknown>;
+  plugins?: Array<{ name?: string; options?: Record<string, unknown> }>;
+};
+// AI 配置在 plugins[ai-chat].options；旧版写在顶层 ai: 下的也认
+const ai = raw.plugins?.find((p) => p.name === 'ai-chat')?.options ?? raw.ai ?? {};
+if (!ai.apiUrl || !ai.model) throw new Error('config.yaml 里没有 AI 插件的 apiUrl / model（plugins[ai-chat].options）');
 
 setupAiTest(
   {
