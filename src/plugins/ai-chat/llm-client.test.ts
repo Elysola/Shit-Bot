@@ -200,3 +200,14 @@ describe('isInputError', () => {
     expect(isInputError(new TypeError("Header 'Authorization' has invalid value"))).toBe(false);
   });
 });
+
+describe('jsonCompletion 的失败信息', () => {
+  test('被 maxTokens 截断时，错误里写明结束原因和输出片段', async () => {
+    scriptFetch([[200, { choices: [{ message: { content: '{"action":"re' }, finish_reason: 'length' }] }]]);
+    const err = await jsonCompletion({ ...baseReq, purpose: 'chat', repairAttempts: 0, validate: () => null }).catch((e) => e);
+    expect(err).toBeInstanceOf(JsonOutputError);
+    expect((err as Error).message).toContain('finish_reason=length');
+    expect((err as Error).message).toContain('截断');
+    expect((err as Error).message).toContain('{"action":"re');
+  });
+});

@@ -331,6 +331,9 @@ export async function jsonCompletion<T>(req: JsonRequest<T>): Promise<T> {
   const messages: ChatMessage[] = [...base.messages];
   const key = `${base.target.apiUrl}|${base.target.model}`;
 
+  // 最后一次的输出与结束原因：失败时写进错误，日志里能看出是被截断、空回复还是答非所问
+  let lastText = '';
+  let lastFinish = '';
   for (let round = 0; round <= repairAttempts; round++) {
     const useJsonMode = !jsonModeUnsupported.has(key);
     let data: ChatCompletionResponse;
@@ -355,6 +358,8 @@ export async function jsonCompletion<T>(req: JsonRequest<T>): Promise<T> {
     const parsed = parseJsonLoose(text);
     const value = parsed === undefined ? null : validate(parsed);
     if (value !== null) return value;
+    lastText = text;
+    lastFinish = data.choices?.[0]?.finish_reason || '';
 
     if (round < repairAttempts) {
       logger.warn('AI', `${logPrefix(base.purpose)} 输出不是合格的 JSON，要求重新生成`);
@@ -367,7 +372,10 @@ export async function jsonCompletion<T>(req: JsonRequest<T>): Promise<T> {
     }
   }
 
-  throw new JsonOutputError('模型多次未返回符合要求的 JSON');
+  const tries = repairAttempts + 1;
+  const hint = lastFinish === 'length' ? '：输出被 maxTokens 截断（推理模型的思考也占 token）' : '';
+  const sample = lastText ? `，输出：${lastText.replace(/\s+/g, ' ').slice(0, 120)}` : '，输出为空';
+  throw new JsonOutputError(`模型${tries > 1 ? ` ${tries} 次都` : ''}没有返回符合要求的 JSON（finish_reason=${lastFinish || '无'}${hint}${sample}）`);
 }
 
 /** 测试专用：清空"不支持 response_format"的记忆 */

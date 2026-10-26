@@ -369,7 +369,8 @@ export async function judge(persona: PersonaCard, scan: TriggerScan, now: number
       { role: 'system', content: p.system },
       { role: 'user', content: p.user },
     ],
-    maxTokens: 300,
+    // 输出只是一小段 JSON，但推理模型的思考也算在 maxTokens 里：给小了会在写出 JSON 之前被截断
+    maxTokens: 1024,
     temperature: 0.5,
     repairAttempts: 0,
     validate: (v) => validateJudge(v, p.refs, getAiConfig().proactive.allowReactOnly),
