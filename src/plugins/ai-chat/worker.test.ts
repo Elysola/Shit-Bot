@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
-import { recordUsage } from './llm-client';
+import { RateLimitedError, recordUsage } from './llm-client';
 import {
   PermanentJobError,
   drainJobs,
@@ -115,5 +115,17 @@ describe('运行时开关（审查修复）', () => {
     await drainJobs(Date.now());
     expect(ran).toBe(1);
     expect(job(id).status).toBe('done');
+  });
+});
+
+describe('限流（审查修复）', () => {
+  test('任务被上游限流：推迟到暂停结束，不算一次失败', async () => {
+    const retryAt = Date.now() + 60_000;
+    registerJobHandler('embed', async () => {
+      throw new RateLimitedError('HTTP 429', retryAt);
+    });
+    const id = enqueueJob('embed', {}, {}, Date.now())!;
+    await drainJobs(Date.now());
+    expect(job(id)).toMatchObject({ status: 'pending', attempts: 0, run_after: retryAt });
   });
 });

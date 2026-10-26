@@ -4,6 +4,7 @@ import * as path from 'path';
 import { setConfigForTesting } from '@/config';
 import { getDatabase, initDatabase } from '@/storage';
 import { migrateAiSchema } from '@/plugins/ai-chat/db/schema';
+import { resetRateLimitForTesting } from '@/plugins/ai-chat/llm-client';
 import type { DiscordUserInfo, MemberInfo } from '@/plugins/ai-chat/identity';
 import type { IngestMessage } from '@/plugins/ai-chat/ingest';
 import { renderDiscordContent, type MentionResolver, type PersonRef } from '@/plugins/ai-chat/mentions';
@@ -58,6 +59,7 @@ export function setupAiTest(ai: Record<string, unknown> = {}, extra: Record<stri
   initDatabase(':memory:');
   // AI 表由插件在启动时迁移（onAfterInit）；测试里直接建
   migrateAiSchema(getDatabase(), { quiet: true });
+  resetRateLimitForTesting();
 }
 
 export type FakeLlmRequest = { url: string; body: Record<string, unknown>; system: string; user: string };

@@ -2,7 +2,7 @@ import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import { isAiSchemaReady } from '@/plugins/ai-chat/db/schema';
-import { getTokensUsedToday, type LlmPurpose } from './llm-client';
+import { RateLimitedError, getTokensUsedToday, type LlmPurpose } from './llm-client';
 
 /**
  * 进程内的后台任务队列（数据在 jobs 表里，重启不丢）：
@@ -160,6 +160,11 @@ export async function runJob(job: JobRow, now: number = Date.now()): Promise<'do
     const msg = (e as Error)?.message ?? String(e);
     if (e instanceof BudgetExceededError) {
       db.run("UPDATE jobs SET status = 'pending', run_after = ?, last_error = ?, updated_at = ? WHERE id = ?", [nextUtc8Midnight(now), msg, now, job.id]);
+      return 'postponed';
+    }
+    if (e instanceof RateLimitedError) {
+      // 被上游限流：等暂停结束再试，不算一次失败
+      db.run("UPDATE jobs SET status = 'pending', run_after = ?, last_error = ?, updated_at = ? WHERE id = ?", [e.retryAt, msg.slice(0, 1000), now, job.id]);
       return 'postponed';
     }
     const attempts = job.attempts + 1;

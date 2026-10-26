@@ -91,7 +91,8 @@ bun run build && bun run start
 |---|---|
 | 省钱：后台任务用便宜的模型 | `memory.extractor.model` / `apiUrl` / `apiKey`（提炼、画像、互动评估都用它）；`proactive.judgeModel`（插话判断）。不填就沿用聊天模型 |
 | 限制后台提炼的花费 | `memory.extractor.dailyTokenBudget`（默认 300 万 token）：提炼和画像每天用到这么多就顺延到第二天；互动评估和聊天的用量计入但不受它限制 |
-| 某些频道不观察、不记录 | `memory.observe.channelDenylist`（频道或分类 ID） |
+| 某些频道不观察、不记录 | `memory.observe.channelDenylist`（频道或分类 ID；已经入库的消息也不再提炼） |
+| 上游有频率限制、经常报 429 | `memory.extractor.minIntervalMs`：后台请求之间至少隔这么多毫秒（例如 3000） |
 | 只让它在某些频道插话 | `proactive.channels`（白名单）/ `proactive.denyChannels` |
 | 让它话多 / 话少 | 人设卡 `proactive.chattiness`（0–1）；或 `proactive.threshold`（越大越少插话） |
 | 晚上别插话 | `proactive.quietHours: "01:00-08:00"`（UTC+8）；不填时按人设卡作息，精力低于 0.2 的时段不插话 |

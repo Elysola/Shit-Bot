@@ -71,7 +71,9 @@ export async function embedTexts(texts: string[], kind: 'query' | 'document', op
     const batch = texts.slice(i, i + e.batchSize).map((t) => prefix + String(t ?? '').slice(0, 2000));
     const body: Record<string, unknown> = { model: e.model, input: batch, encoding_format: 'float' };
     if (e.dimensions > 0) body.dimensions = e.dimensions;
-    const data = await post(url, body, e.apiKey, opts.timeoutMs ?? e.timeoutMs);
+    // 后台批量补向量：CPU 上的本地模型一批要好几秒，至少给 60 秒；查询由调用方传更短的超时
+    const timeoutMs = opts.timeoutMs ?? (kind === 'document' ? Math.max(e.timeoutMs, 60_000) : e.timeoutMs);
+    const data = await post(url, body, e.apiKey, timeoutMs);
     const items = Array.isArray(data.data) ? [...data.data] : [];
     if (items.length !== batch.length) throw new Error(`向量接口返回 ${items.length} 条，期望 ${batch.length} 条`);
     items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));

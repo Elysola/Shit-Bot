@@ -37,6 +37,15 @@ export function upsertChannel(c: ChannelInfo, now: number = Date.now()): void {
        name = COALESCE(excluded.name, channels.name), type = excluded.type, updated_at = excluded.updated_at`,
     [c.channelId, c.guildId, c.parentId, c.name, c.type, now]
   );
+  // 子区 / 论坛帖：顺带记下父频道属于哪个分类。论坛频道本身不会单独同步，
+  // 提炼时按"帖子 → 父频道 → 分类"判断黑名单要靠这条记录
+  if (c.parentId && c.categoryId) {
+    getDatabase().run(
+      `INSERT INTO channels (channel_id, guild_id, parent_id, name, type, updated_at) VALUES (?, ?, ?, NULL, 'unknown', ?)
+       ON CONFLICT(channel_id) DO UPDATE SET parent_id = COALESCE(channels.parent_id, excluded.parent_id)`,
+      [c.parentId, c.guildId, c.categoryId, now]
+    );
+  }
 }
 
 export function getChannel(channelId: string): ChannelRow | null {

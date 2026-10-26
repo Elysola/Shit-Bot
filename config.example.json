@@ -95,7 +95,8 @@
             "images": true,
             "maxImagesPerWindow": 4,
             "concurrency": 1,
-            "dailyTokenBudget": 3000000
+            "dailyTokenBudget": 3000000,
+            "minIntervalMs": 0
           },
           "core": {
             "userPins": 12,

@@ -40,7 +40,8 @@
 | 后台任务用便宜的模型 | `memory.extractor.model` / `apiUrl` / `apiKey`；`proactive.judgeModel` |
 | 提炼和画像的每日 token 上限 | `memory.extractor.dailyTokenBudget`（默认 300 万；提炼、画像、互动评估的用量都计入，用完后提炼和画像顺延到第二天；互动评估和聊天不受它限制） |
 | 插话判断次数上限 | `proactive.maxJudgeCallsPerDay`（默认 400） |
-| 不观察某些频道 | `memory.observe.channelDenylist` |
+| 后台请求太频繁被上游限流 | `memory.extractor.minIntervalMs`（后台请求之间的最小间隔，毫秒；默认 0）。被限流时后台任务会自动暂停、推迟，不算失败 |
+| 不观察某些频道 | `memory.observe.channelDenylist`（已经入库的消息也不再提炼） |
 | 完全不被动观察 | `memory.observe.enabled: false`（只记和它的直接对话） |
 
 所有调用按"日期 × 用途 × 模型"记在 `llm_usage` 表里，见[常用查询](#常用查询)。
@@ -154,7 +155,8 @@ sqlite3 data/bot.db "SELECT valence, arousal, cause, datetime(updated_at/1000, '
 | 特权 intent 没在开发者后台打开 | 自动不订阅；配置强制开启但被 Discord 拒绝时，去掉特权 intent 重新登录。成员列表 / 在线状态相关功能缺失，其余正常 |
 | AI 数据库迁移失败 | 只关闭 AI 记忆相关功能，日志里有原因；推文推送照常 |
 | 聊天模型不可用 | 自动重试（超时、429、5xx）；最终失败时回复"AI 暂时不可用" |
-| 后台模型不可用 | 任务按退避重试，最多 5 次；不影响聊天。提炼窗口 5 次都失败就跳过这个窗口（日志 `[Memory] … 已跳过`），不会卡住整个频道 |
+| 后台模型不可用 | 任务按退避重试，最多 5 次，之后由调度重新投递；不影响聊天。只有问题出在这批消息本身（内容审核拒绝、输入过长、给不出合格 JSON）时才跳过这个窗口（日志 `[Memory] … 已跳过`）；key 配错、参数不支持、模型不可用、5xx、网络问题不跳过，修好后接着提炼 |
+| 被上游限流（429） | 后台任务一起暂停（30 秒起、连续限流翻倍、最长 10 分钟，或按 `Retry-After`），任务推迟、不算失败；聊天照常短暂重试 |
 | 后台 token 预算用完 | 提炼、画像顺延到第二天 0 点（UTC+8） |
 | 向量服务不可用 / 超时 | 查询 3 秒超时后只用全文检索；回填任务稍后重试 |
 | sqlite-vec 加载失败 | 自动改用 JS 后端，结果一致 |

@@ -40,6 +40,8 @@ export type AIMemoryExtractorConfig = {
   concurrency: number;
   /** 抽取类后台任务每天的 token 上限，0 = 不限 */
   dailyTokenBudget: number;
+  /** 后台请求（提炼、画像、互动评估）之间的最小间隔（毫秒），用来避开上游的频率限制；0 = 不限 */
+  minIntervalMs: number;
 };
 
 export type AIMemoryCoreConfig = {
@@ -313,6 +315,7 @@ export function normalizeAiConfig(rawAi: unknown): AIConfig {
         maxImagesPerWindow: clampInt(extractor.maxImagesPerWindow, 4, 0, 10),
         concurrency: clampInt(extractor.concurrency, 1, 1, 4),
         dailyTokenBudget: clampInt(extractor.dailyTokenBudget, 3_000_000, 0, 1_000_000_000),
+        minIntervalMs: clampInt(extractor.minIntervalMs, 0, 0, 600_000),
       },
       core: {
         userPins: clampInt(core.userPins, 12, 0, 50),

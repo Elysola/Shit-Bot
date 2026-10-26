@@ -100,6 +100,7 @@ plugins:
           maxImagesPerWindow: 4
           concurrency: 1
           dailyTokenBudget: 3000000   # 提炼和画像每天的 token 上限（互动评估的用量计入但不受限），0 = 不限
+          minIntervalMs: 0     # 后台请求（提炼、画像、互动评估）之间的最小间隔（毫秒），上游有频率限制时调大；0 = 不限
         core:                  # 每次聊天都会带上的核心记忆
           userPins: 12
           guildPins: 20

@@ -4,7 +4,8 @@ import { getDatabase } from '@/storage';
 import { SLOT_WHITELIST } from '@/plugins/ai-chat/db/schema';
 import { ForgetChangedError, assertNoForgetSince, forgetEpoch } from '@/plugins/ai-chat/forget-guard';
 import { getUser, isOptedOut, listOptedOutUserIds, userExists } from '@/plugins/ai-chat/identity';
-import { extractorTarget, getTokensUsedToday, jsonCompletion, type ChatMessage, type ContentPart } from '@/plugins/ai-chat/llm-client';
+import { extractorTarget, getTokensUsedToday, isInputError, jsonCompletion, type ChatMessage, type ContentPart } from '@/plugins/ai-chat/llm-client';
+import { getChannel, isChannelDenylisted } from '@/plugins/ai-chat/channels';
 import { parseAttachments, parseStoredMentions, type StoredMessage } from '@/plugins/ai-chat/messages';
 import { personaForGuild } from '@/plugins/ai-chat/persona/loader';
 import { formatUtc8 } from '@/plugins/ai-chat/time';
@@ -52,6 +53,7 @@ export function scheduleDueWindows(now: number = Date.now()): number {
     .all() as Array<{ channel_id: string; n: number; oldest: number; newest: number; live: number }>;
   let queued = 0;
   for (const r of rows) {
+    if (skipDenylisted(r.channel_id, now)) continue;
     const due =
       r.n >= cfg.windowMessages ||
       (r.n >= 8 && now - r.newest >= cfg.idleSeconds * 1000) ||
@@ -79,12 +81,22 @@ export type WindowPlan = {
 };
 
 /**
- * 这次失败后任务就不再重试了（永久错误、或用完了重试次数）。预算用完、删除期间重做、功能被关掉都不算：
- * 它们之后能正常处理，窗口要留着。
+ * 这次失败后要不要跳过这个窗口：只有问题出在这批消息本身（上游 400 / 内容审核、模型多次给不出合格的 JSON），
+ * 且已经用完重试次数时才跳过。鉴权失败、key 配错、模型不可用、限流、5xx、网络、超时都和这批消息无关，
+ * 跳过会让这些消息永远提炼不了：窗口留着，任务失败后调度会重新投递，等配置或上游恢复。
  */
 function givingUp(e: unknown, attemptsBefore: number): boolean {
   if (e instanceof BudgetExceededError || e instanceof ForgetChangedError || !getAiConfig().memory.enabled) return false;
+  if (!isInputError(e) && !(e instanceof PermanentJobError)) return false;
   return e instanceof PermanentJobError || attemptsBefore + 1 >= MAX_ATTEMPTS;
+}
+
+/** 频道在黑名单里：已经入库的消息也不再提炼，直接标记为已处理（不花 token）。返回是否在黑名单里 */
+function skipDenylisted(channelId: string, now: number): boolean {
+  const ch = getChannel(channelId);
+  if (!isChannelDenylisted(channelId, ch?.parent_id ?? null, getAiConfig().memory.observe.channelDenylist)) return false;
+  getDatabase().run('UPDATE messages SET extracted_at = ? WHERE channel_id = ? AND extracted_at IS NULL', [now, channelId]);
+  return true;
 }
 
 /**
@@ -751,6 +763,7 @@ export async function runExtractWindow(channelId: string, now: number = Date.now
   const ai = getAiConfig();
   if (!ai.memory.enabled) throw new PermanentJobError('记忆功能已关闭');
   const epoch = forgetEpoch();
+  if (skipDenylisted(channelId, now)) return null;
   const w = loadWindow(channelId, ai.memory.extractor.windowMessages);
   if (!w) return null;
   const ids = w.messages.map((m) => m.id);

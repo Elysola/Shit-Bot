@@ -42,6 +42,61 @@ export type LlmTarget = { apiUrl: string; apiKey: string; model: string };
 
 export type LlmHttpError = Error & { status?: number; body?: string; retryAfterMs?: number };
 
+/** 上游限流（429）：后台任务不算失败，推迟到 retryAt 再试 */
+export class RateLimitedError extends Error {
+  constructor(
+    message: string,
+    readonly retryAt: number
+  ) {
+    super(message);
+  }
+}
+
+/** 模型多次没有给出合格的 JSON：问题出在这批输入上（换个窗口就好），不是配置或网络 */
+export class JsonOutputError extends Error {}
+
+// 400 / 422 里和这批输入有关的：内容审核 / 安全拦截、上下文或输入过长。参数不支持之类的配置错误不算
+const INPUT_ERROR_TEXT =
+  /content[_ -]?(filter|policy|management)|safety|moderation|blocked|sensitive|prohibited|violat|context[_ -]?length|maximum context|prompt is too long|input is too long|too many tokens|token limit/i;
+
+/**
+ * 失败是不是这批输入本身造成的（换一批输入就可能成功）：内容审核 / 输入过长（400 / 422 且错误内容说明了这一点、413）、
+ * 输出不是合格 JSON。鉴权、参数不支持、模型不可用、限流、5xx、网络、超时都不算——它们和输入无关，等配置或上游恢复。
+ */
+export function isInputError(e: unknown): boolean {
+  if (e instanceof JsonOutputError) return true;
+  const err = e as LlmHttpError;
+  if (err?.status === 413) return true;
+  if (err?.status !== 400 && err?.status !== 422) return false;
+  return INPUT_ERROR_TEXT.test(`${err.body ?? ''} ${err.message ?? ''}`);
+}
+
+// 后台任务（提炼、画像、互动评估）的请求：按最小间隔排队；收到 429 后全部暂停，连续限流时暂停时间翻倍
+const BACKGROUND: ReadonlySet<LlmPurpose> = new Set<LlmPurpose>(['extract', 'profile', 'appraise']);
+let lastBackgroundAt = 0;
+let pausedUntil = 0;
+let rateLimitStreak = 0;
+
+async function waitBackgroundTurn(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    const gap = getAiConfig().memory.extractor.minIntervalMs;
+    // 系统时钟往回调时，上次请求时间按"现在"算，避免空等
+    const last = Math.min(lastBackgroundAt, now);
+    const wait = Math.max(pausedUntil - now, gap > 0 ? last + gap - now : 0);
+    if (wait <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(wait, 60_000)));
+  }
+  lastBackgroundAt = Date.now();
+}
+
+/** 测试用：清掉限流暂停与节流状态 */
+export function resetRateLimitForTesting(): void {
+  lastBackgroundAt = 0;
+  pausedUntil = 0;
+  rateLimitStreak = 0;
+}
+
 export type ChatRequest = {
   target: LlmTarget;
   purpose: LlmPurpose;
@@ -136,7 +191,9 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatCompletionRe
   const retryBaseMs = req.retryBaseMs ?? 600;
   let lastErr: unknown;
 
+  const background = BACKGROUND.has(req.purpose);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (background) await waitBackgroundTurn();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -165,11 +222,20 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatCompletionRe
 
       const data = (await response.json()) as ChatCompletionResponse;
       recordUsage(req.purpose, target.model, data.usage);
+      if (background) rateLimitStreak = 0;
       return data;
     } catch (e) {
       const err = e as LlmHttpError;
       const status = err.status || 0;
       const isTimeout = err.name === 'AbortError';
+      if (background && status === 429) {
+        // 后台任务撞上限流：马上重试只会继续被拒。所有后台请求一起暂停，任务推迟到暂停结束，不算失败
+        const pause = err.retryAfterMs ?? Math.min(30_000 * 2 ** rateLimitStreak, 10 * 60_000);
+        rateLimitStreak++;
+        pausedUntil = Math.max(pausedUntil, Date.now() + pause);
+        logger.warn('AI', `${logPrefix(req.purpose)} 被上游限流，后台任务暂停 ${Math.round(pause / 1000)}s`);
+        throw new RateLimitedError(err.message, pausedUntil);
+      }
       const retryable =
         (!status || isTimeout || status === 408 || status === 429 || status >= 500) && !isImageFetchError(err);
       const attemptCap = isTimeout ? Math.min(2, maxAttempts) : maxAttempts;
@@ -301,7 +367,7 @@ export async function jsonCompletion<T>(req: JsonRequest<T>): Promise<T> {
     }
   }
 
-  throw new Error('模型多次未返回符合要求的 JSON');
+  throw new JsonOutputError('模型多次未返回符合要求的 JSON');
 }
 
 /** 测试专用：清空"不支持 response_format"的记忆 */

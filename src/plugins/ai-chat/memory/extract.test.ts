@@ -290,3 +290,48 @@ describe('只供总结的消息（审查修复，第 11 轮）', () => {
     expect(fake.calls.length).toBe(1);
   });
 });
+
+describe('失败跳过与频道黑名单（限流修复）', () => {
+  test('最后一次重试是上游 5xx：窗口保留（等上游恢复），不跳过', async () => {
+    const t = Date.now() - 3600_000;
+    for (let i = 0; i < 10; i++) ingestMessage(ingestFixture({ authorId: A, username: 'awei', createdAt: t + i * 1000, content: `正常的聊天内容 ${i}` }));
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('upstream down', { status: 503 })) as unknown as typeof fetch;
+    try {
+      expect(scheduleDueWindows(Date.now())).toBe(1);
+      getDatabase().run("UPDATE jobs SET attempts = ? WHERE type = 'extract_window'", [MAX_ATTEMPTS - 1]);
+      await drainJobs(Date.now());
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(getDatabase().query("SELECT status FROM jobs WHERE type = 'extract_window'").get()).toEqual({ status: 'failed' });
+    expect((getDatabase().query('SELECT COUNT(*) AS c FROM messages WHERE extracted_at IS NULL').get() as { c: number }).c).toBe(10);
+  }, 15000);
+
+  test('黑名单频道里已经入库的消息不再提炼，也不调用模型', async () => {
+    const t = Date.now() - 3600_000;
+    for (let i = 0; i < 10; i++) ingestMessage(ingestFixture({ authorId: A, username: 'awei', createdAt: t + i * 1000, content: `机器人频道的自动消息 ${i}` }));
+    getAiConfig().memory.observe.channelDenylist = [CHANNEL_ID];
+    fake = installFakeLlm(() => JSON.stringify({ episode: null, ops: [], bot_sentiment: [], atmosphere: null }));
+    expect(scheduleDueWindows(Date.now())).toBe(0);
+    expect(await runExtractWindow(CHANNEL_ID, Date.now())).toBeNull();
+    expect(fake.calls).toHaveLength(0);
+    expect((getDatabase().query('SELECT COUNT(*) AS c FROM messages WHERE extracted_at IS NULL').get() as { c: number }).c).toBe(0);
+  });
+});
+
+describe('分类黑名单与论坛帖（审查修复）', () => {
+  test('论坛帖里已入库的消息：之后把论坛所属分类加进黑名单，也不再提炼', async () => {
+    const forum = '700000000000000300';
+    const post = '700000000000000301';
+    const category = '700000000000000399';
+    const t = Date.now() - 3600_000;
+    const channel = { channelId: post, guildId: GUILD_ID, parentId: forum, name: '帖子', type: 'thread', categoryId: category };
+    for (let i = 0; i < 10; i++) ingestMessage(ingestFixture({ authorId: A, username: 'awei', channel, createdAt: t + i * 1000, content: `论坛帖里的讨论 ${i}` }));
+    getAiConfig().memory.observe.channelDenylist = [category];
+    fake = installFakeLlm(() => JSON.stringify({ episode: null, ops: [], bot_sentiment: [], atmosphere: null }));
+    expect(scheduleDueWindows(Date.now())).toBe(0);
+    expect(fake.calls).toHaveLength(0);
+    expect((getDatabase().query('SELECT COUNT(*) AS c FROM messages WHERE channel_id = ? AND extracted_at IS NULL').get(post) as { c: number }).c).toBe(0);
+  });
+});

@@ -9,7 +9,11 @@ import {
   jsonCompletion,
   judgeTarget,
   parseJsonLoose,
+  JsonOutputError,
+  RateLimitedError,
+  isInputError,
   resetJsonModeCacheForTesting,
+  resetRateLimitForTesting,
   type ChatRequest,
 } from './llm-client';
 
@@ -50,6 +54,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  resetRateLimitForTesting();
 });
 
 describe('chatCompletion', () => {
@@ -158,5 +163,40 @@ describe('调用目标', () => {
     setConfigForTesting({ plugins: [{ name: 'ai-chat', enabled: true, options: { apiUrl: 'http://chat/v1', apiKey: 'ck', model: 'chat-m', proactive: { judgeModel: 'judge' } } }] });
     expect(extractorTarget().model).toBe('chat-m');
     expect(judgeTarget().model).toBe('judge');
+  });
+});
+
+describe('限流（429）', () => {
+  test('后台任务被限流：不在当次重试，抛 RateLimitedError，后台请求整体暂停', async () => {
+    scriptFetch([[429, 'rate limited']]);
+    const before = Date.now();
+    const err = await chatCompletion(baseReq).catch((e) => e);
+    expect(err).toBeInstanceOf(RateLimitedError);
+    expect((err as RateLimitedError).retryAt).toBeGreaterThanOrEqual(before + 30_000);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('聊天被限流：照常短暂重试', async () => {
+    scriptFetch([
+      [429, 'rate limited'],
+      [200, okReply('ok')],
+    ]);
+    const res = await chatCompletion({ ...baseReq, purpose: 'chat' });
+    expect(res.choices?.[0]?.message?.content).toBe('ok');
+    expect(calls).toHaveLength(2);
+  });
+});
+
+describe('isInputError', () => {
+  const http = (status: number, body: string): Error => Object.assign(new Error(`HTTP ${status}: ${body}`), { status, body });
+  test('内容审核、输入过长、JSON 输出失败算输入问题；参数不支持、鉴权、限流、5xx、网络错误不算', () => {
+    expect(isInputError(http(400, '{"error":{"code":"content_filter"}}'))).toBe(true);
+    expect(isInputError(http(400, "This model's maximum context length is 8192 tokens"))).toBe(true);
+    expect(isInputError(http(413, 'payload too large'))).toBe(true);
+    expect(isInputError(new JsonOutputError('x'))).toBe(true);
+    expect(isInputError(http(400, "Unsupported parameter: 'max_tokens' is not supported with this model"))).toBe(false);
+    expect(isInputError(http(422, 'unsupported_value: temperature'))).toBe(false);
+    for (const s of [401, 403, 404, 429, 500, 503]) expect(isInputError(http(s, 'x'))).toBe(false);
+    expect(isInputError(new TypeError("Header 'Authorization' has invalid value"))).toBe(false);
   });
 });
