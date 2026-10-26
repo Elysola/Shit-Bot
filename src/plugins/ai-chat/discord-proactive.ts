@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import type { GuildTextBasedChannel, Message, TextChannel } from 'discord.js';
 import { getAiConfig } from './config';
 import { queueAppraisal } from './appraise';
@@ -93,7 +94,7 @@ export function onUnaddressedMessage(message: Message, selfId: string): void {
       Date.now()
     );
   } catch (e) {
-    console.warn('[Proactive] 记录反馈失败(忽略):', (e as Error).message);
+    logger.warn('Proactive', '记录反馈失败(忽略):', (e as Error).message);
   }
   const cfg = getAiConfig().proactive;
   const state = timers.get(message.channelId) ?? { timer: null, count: 0, latest: message, selfId };
@@ -153,8 +154,8 @@ async function evaluate(latest: Message, selfId: string): Promise<void> {
     } finally {
       releaseJudge();
     }
-    console.log(
-      `[Proactive] #${(latest.channel as TextChannel).name ?? ref.channelId} 得分 ${score.toFixed(2)}（${scan.triggers.map((t) => t.kind).join('+')}）→ ${decision.action}${decision.reason ? `：${decision.reason}` : ''}`
+    logger.info(
+      'Proactive', `#${(latest.channel as TextChannel).name ?? ref.channelId} 得分 ${score.toFixed(2)}（${scan.triggers.map((t) => t.kind).join('+')}）→ ${decision.action}${decision.reason ? `：${decision.reason}` : ''}`
     );
     if (decision.action === 'none' || !decision.target) return;
 
@@ -170,7 +171,7 @@ async function evaluate(latest: Message, selfId: string): Promise<void> {
         const ok = await target.react(emoji).then(
           () => true,
           (e) => {
-            console.warn('[Proactive] 贴表情失败:', (e as Error).message);
+            logger.warn('Proactive', '贴表情失败:', (e as Error).message);
             return false;
           }
         );
@@ -188,7 +189,7 @@ async function evaluate(latest: Message, selfId: string): Promise<void> {
       releaseProactive(ref);
     }
   } catch (e) {
-    console.warn('[Proactive] 评估失败(忽略):', (e as Error).message);
+    logger.warn('Proactive', '评估失败(忽略):', (e as Error).message);
   } finally {
     evaluating.delete(ref.channelId);
   }
@@ -259,7 +260,7 @@ async function speak(target: Message, selfId: string, ref: ChannelRef, persona: 
     personaId: personaForGuild(ref.guildId)?.id ?? null,
     proactive: true,
   });
-  console.log(`[Proactive] 插话：${text.slice(0, 60).replace(/\s+/g, ' ')}`);
+  logger.info('Proactive', `插话：${text.slice(0, 60).replace(/\s+/g, ' ')}`);
 }
 
 let registered = false;

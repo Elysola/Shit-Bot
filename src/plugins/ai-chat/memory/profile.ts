@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from '@/plugins/ai-chat/config';
 import { getDatabase } from '@/storage';
 import { assertNoForgetSince, forgetEpoch } from '@/plugins/ai-chat/forget-guard';
@@ -296,7 +297,7 @@ export async function runRefreshProfile(scope: ProfileScope, subjectId: string, 
   // 写入反思 / 调整置顶用的时间戳是 now，会推高 updated_at：水位线推到 now，避免下一轮因为自己的写入又被判定为"有变化"。
   // 不能推到"当前最大的 updated_at"：生成期间别人写入的新记忆（时间晚于 now）模型没读过，要留给下一轮
   getDatabase().run('UPDATE profiles SET memory_watermark = ? WHERE scope = ? AND subject_id = ?', [Math.max(p.watermark, now), scope, subjectId]);
-  console.log(`[Memory] 已刷新${scope === 'user' ? `「${displayNameOf(subjectId, null)}」的` : scope === 'guild' ? '服务器' : '自我'}画像`);
+  logger.info('Memory', `已刷新${scope === 'user' ? `「${displayNameOf(subjectId, null)}」的` : scope === 'guild' ? '服务器' : '自我'}画像`);
   return result;
 }
 

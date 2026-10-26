@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import { dayKeyUtc8 } from './time';
@@ -45,7 +46,7 @@ export function runRetention(now: number = Date.now()): { messages: number; sess
       // 尽力而为
     }
   }
-  if (messages + sessions > 0) console.log(`[Retention] 删除了 ${messages} 条超过保留期的消息、${sessions} 条在线活动记录`);
+  if (messages + sessions > 0) logger.info('Retention', `删除了 ${messages} 条超过保留期的消息、${sessions} 条在线活动记录`);
   return { messages, sessions };
 }
 

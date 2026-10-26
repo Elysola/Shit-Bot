@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from '@/plugins/ai-chat/config';
 import { getDatabase } from '@/storage';
 import { SLOT_WHITELIST } from '@/plugins/ai-chat/db/schema';
@@ -96,7 +97,7 @@ function skipWindow(channelId: string, e: unknown): void {
     w.messages.map((m) => m.id),
     Date.now()
   );
-  console.warn(`[Memory] 频道 ${channelId} 的一个窗口（${w.messages.length} 条消息）多次提炼失败，已跳过: ${(e as Error)?.message ?? e}`);
+  logger.warn('Memory', `频道 ${channelId} 的一个窗口（${w.messages.length} 条消息）多次提炼失败，已跳过: ${(e as Error)?.message ?? e}`);
 }
 
 /** 取一个频道最早的 max 条未处理消息作为窗口，外加窗口之前 10 条作为上下文 */
@@ -723,7 +724,7 @@ async function relatedMemories(w: WindowPlan, candidates: Candidate[]): Promise<
       const rows = hits.map((h) => getMemory(h.id)).filter((m): m is MemoryRow => !!m && m.status === 'active');
       if (rows.length) out.set(c.id, rows);
     } catch (e) {
-      console.warn('[Extract] 查找相近记忆失败(跳过):', (e as Error).message);
+      logger.warn('Extract', '查找相近记忆失败(跳过):', (e as Error).message);
       break;
     }
   }
@@ -738,7 +739,7 @@ async function loadImages(images: WindowRefs['images']): Promise<ContentPart[]> 
       const { dataUri } = await fetchImageAsDataUri(img.url, max);
       parts.push({ type: 'text', text: `${img.label}（${img.ref}）：` }, { type: 'image_url', image_url: { url: dataUri } });
     } catch (e) {
-      console.warn(`[Extract] 图片 ${img.label} 下载失败(跳过): ${(e as Error).message}`);
+      logger.warn('Extract', `图片 ${img.label} 下载失败(跳过): ${(e as Error).message}`);
     }
   }
   return parts;
@@ -805,8 +806,8 @@ export async function runExtractWindow(channelId: string, now: number = Date.now
   const reasons = Object.entries(stats.reasons)
     .map(([k, v]) => `${k}×${v}`)
     .join(' ');
-  console.log(
-    `[Extract] #${getChannelLabel(channelId)} ${w.messages.length} 条 → 新增 ${stats.added} / 更新 ${stats.updated} / 取代 ${stats.superseded} / 丢弃 ${stats.dropped}${reasons ? `（${reasons}）` : ''}`
+  logger.info(
+    'Extract', `#${getChannelLabel(channelId)} ${w.messages.length} 条 → 新增 ${stats.added} / 更新 ${stats.updated} / 取代 ${stats.superseded} / 丢弃 ${stats.dropped}${reasons ? `（${reasons}）` : ''}`
   );
   return stats;
 }

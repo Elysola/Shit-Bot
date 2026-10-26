@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import type { Database } from 'bun:sqlite';
 
 export type Migration = {
@@ -51,7 +52,7 @@ export function runMigrations(db: Database, migrations: readonly Migration[]): M
   const maxDone = done.size > 0 ? Math.max(...done) : 0;
   if (maxDone > latestKnown) {
     // 数据库被更新版本的程序迁移过（例如回滚了代码）：不尝试降级，只提示
-    console.warn(`[DB] 数据库结构版本 v${maxDone} 高于当前程序已知的 v${latestKnown}，可能是回滚了代码`);
+    logger.warn('DB', `数据库结构版本 v${maxDone} 高于当前程序已知的 v${latestKnown}，可能是回滚了代码`);
   }
 
   const applied: number[] = [];

@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { relationshipLines } from './affinity';
 import { renderLoreBlock, selectLore } from './lore';
@@ -29,7 +30,7 @@ export function activePersona(guildId: string | null | undefined): PersonaCard |
   try {
     return personaForGuild(guildId);
   } catch (e) {
-    console.warn('[Persona] 读取人设卡失败，回退到 systemPrompt:', (e as Error).message);
+    logger.warn('Persona', '读取人设卡失败，回退到 systemPrompt:', (e as Error).message);
     return null;
   }
 }
@@ -84,7 +85,7 @@ export function buildCoreBlocks(input: CoreContextInput): string[] {
       const b = fn();
       if (b) blocks.push(b);
     } catch (e) {
-      console.warn(`[Memory] 组装${what}失败(忽略):`, (e as Error).message);
+      logger.warn('Memory', `组装${what}失败(忽略):`, (e as Error).message);
     }
   };
 
@@ -147,7 +148,7 @@ export function buildLorePrompt(input: LoreContextInput): string | null {
     );
     return renderLoreBlock(picked, input.guildId ?? null);
   } catch (e) {
-    console.warn('[Lore] 组装 lorebook 失败(忽略):', (e as Error).message);
+    logger.warn('Lore', '组装 lorebook 失败(忽略):', (e as Error).message);
     return null;
   }
 }

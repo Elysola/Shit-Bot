@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags } from 'discord.js';
 import { defineAiCommand, replyEphemeral } from './command-registry';
 import { userInfoFromDiscord } from './discord-adapter';
@@ -79,7 +80,7 @@ defineAiCommand(
       try {
         bindLegacyIdentity(interaction.user.id, interaction.user.username);
       } catch (e) {
-        console.warn('[Forget] 认领旧身份失败（按已知身份继续删除）:', (e as Error).message);
+        logger.warn('Forget', '认领旧身份失败（按已知身份继续删除）:', (e as Error).message);
       }
       const r = forgetUser(interaction.user.id, { keepOptOut });
       await interaction.editReply({
@@ -91,7 +92,7 @@ defineAiCommand(
         ].join('\n'),
       });
     } catch (e) {
-      console.error('[Forget] 删除失败:', e);
+      logger.error('Forget', '删除失败:', e);
       await interaction.editReply({ content: '删除时出错了，数据没有改动（整个删除在一个事务里）。请稍后再试，或者联系管理员。' });
     }
   }

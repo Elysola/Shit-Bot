@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import type { Database } from 'bun:sqlite';
 import { forbiddenReason, looksSensitive } from '@/plugins/ai-chat/memory/sensitive';
 import { runMigrations, type Migration } from './migrate';
@@ -563,12 +564,12 @@ export function migrateAiSchema(db: Database, opts: { quiet?: boolean } = {}): b
   try {
     const res = runMigrations(db, AI_MIGRATIONS);
     if (res.applied.length > 0 && !opts.quiet) {
-      console.log(`[DB] AI 数据结构已迁移到 v${res.current}（本次执行: ${res.applied.join(', ')}）`);
+      logger.info('DB', `AI 数据结构已迁移到 v${res.current}（本次执行: ${res.applied.join(', ')}）`);
     }
     schemaReady = true;
   } catch (e) {
     schemaReady = false;
-    console.error('[DB] AI 数据迁移失败，记忆相关功能将不可用:', (e as Error).message);
+    logger.error('DB', 'AI 数据迁移失败，记忆相关功能将不可用:', (e as Error).message);
   }
   return schemaReady;
 }

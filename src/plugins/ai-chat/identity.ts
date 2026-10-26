@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getDatabase, getDatabaseGeneration } from '@/storage';
 import type { PersonRef } from './mentions';
 
@@ -339,7 +340,7 @@ export function bindLegacyIdentity(userId: string, username: string): boolean {
     }
   })();
   legacyNames.delete(username);
-  if (changed > 0) console.log(`[Ingest] 旧数据身份绑定: ${username} → ${userId}（${changed} 行）`);
+  if (changed > 0) logger.info('Ingest', `旧数据身份绑定: ${username} → ${userId}（${changed} 行）`);
   return changed > 0;
 }
 

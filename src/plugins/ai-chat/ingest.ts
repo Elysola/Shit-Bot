@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import { isChannelDenylisted, upsertChannel, type ChannelInfo } from './channels';
@@ -164,7 +165,7 @@ export function ingestMessage(input: IngestMessage, opts: { forceKind?: boolean 
       try {
         bindLegacyIdentity(authorId, m.author.user.username);
       } catch (e) {
-        console.warn(`[Ingest] 旧数据身份绑定失败(忽略): ${m.author.user.username}`, (e as Error).message);
+        logger.warn('Ingest', `旧数据身份绑定失败(忽略): ${m.author.user.username}`, (e as Error).message);
       }
     }
 

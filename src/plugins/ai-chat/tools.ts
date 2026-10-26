@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import { webSearch, fetchUrl } from './websearch';
@@ -671,7 +672,7 @@ async function toolReadChannelHistory(args: Record<string, unknown>, ctx: ToolCo
     try {
       await ctx.backfill(Math.min(count + (ctx.excludeMessageId ? 1 : 0), maxC));
     } catch (e) {
-      console.warn('[AI] 频道历史补全失败:', (e as Error).message);
+      logger.warn('AI', '频道历史补全失败:', (e as Error).message);
     }
     msgs = getRecentChannelMessages(ctx.platform, channelId, count, ctx.excludeMessageId);
   }

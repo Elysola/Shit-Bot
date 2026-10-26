@@ -28,7 +28,7 @@ export function initDiscordAiChat(c: Client | null = getDiscordClient()): boolea
   client = c;
   if (!client || !isAiEnabled()) {
     if (client && !isAiEnabled()) {
-      console.log('AI 聊天未启用，跳过 Discord AI 消息监听');
+      logger.info('AI', 'AI 聊天未启用，跳过 Discord AI 消息监听');
     }
     return false;
   }
@@ -40,10 +40,10 @@ export function initDiscordAiChat(c: Client | null = getDiscordClient()): boolea
 
   client.on('messageCreate', (message: Message) => {
     // 这是消息路径上最热的一段(每条消息都跑)：任何异常只记录，绝不能逃逸成未处理拒绝
-    onMessageCreate(message).catch((e) => console.error('[AI] 处理消息异常(已忽略):', (e as Error)?.message || e));
+    onMessageCreate(message).catch((e) => logger.error('AI', '处理消息异常(已忽略):', (e as Error)?.message || e));
   });
 
-  console.log('Discord AI 聊天监听器已注册');
+  logger.info('AI', 'Discord AI 聊天监听器已注册');
   return true;
 }
 
@@ -73,7 +73,7 @@ async function onMessageCreate(message: Message): Promise<void> {
   }
 
   if (!isGuildAllowed(message.guildId)) {
-    console.log(`[AI] 服务器 ${message.guildId || 'DM'} 不在 AI 允许列表中，跳过`);
+    logger.info('AI', `服务器 ${message.guildId || 'DM'} 不在 AI 允许列表中，跳过`);
     return;
   }
   // 有人直接叫 bot：如果刚刚主动插过话，这算是被接住了
@@ -100,13 +100,13 @@ function referenceAllowed(ref: Message): boolean {
 /** 被引用（回复）的那条消息 */
 async function fetchReferenced(message: Message): Promise<Message | null> {
   if (!message.reference?.messageId) {
-    if (message.reference) console.warn(`[AI] 检测到 message.reference 但无 messageId:`, JSON.stringify(message.reference));
+    if (message.reference) logger.warn('AI', `检测到 message.reference 但无 messageId:`, JSON.stringify(message.reference));
     return null;
   }
   try {
     return message.channel.isTextBased() ? await message.channel.messages.fetch(message.reference.messageId) : null;
   } catch (e) {
-    console.error(`[AI] 获取引用消息失败 (messageId=${message.reference.messageId}):`, (e as Error).message);
+    logger.error('AI', `获取引用消息失败 (messageId=${message.reference.messageId}):`, (e as Error).message);
     return null;
   }
 }
@@ -170,7 +170,7 @@ async function replyDirectly(message: Message, selfId: string): Promise<void> {
   let reactions: string[] = [];
   let inputs = buildInputs();
   if (inputs.contextMessage) {
-    console.log(`[AI] 带上下文回复 ${message.author.username} (引用: ${inputs.contextMessage.slice(0, 40)}...)`);
+    logger.info('AI', `带上下文回复 ${message.author.username} (引用: ${inputs.contextMessage.slice(0, 40)}...)`);
   }
   const mentionable = new Set<string>();
   // 回复对应的删除代次：之后（贴表情、发送期间）有人删除了数据，就不能再把这次的结果当成删除后的数据入库
@@ -204,12 +204,12 @@ async function replyDirectly(message: Message, selfId: string): Promise<void> {
       for (const id of [message.author.id, ...inputs.people.keys(), ...(res.mentionableIds ?? [])]) mentionable.add(id);
       // 生成期间有人 /forget-me 或删除了记忆：模型手里的上下文可能带着被删的内容，用删除后的数据重新生成一次
       if (forgetEpoch() === genEpoch || attempt >= 1) break;
-      console.log('[AI] 生成期间有数据被删除，按删除后的数据重新生成');
+      logger.info('AI', '生成期间有数据被删除，按删除后的数据重新生成');
       inputs = buildInputs();
     }
   } catch (e) {
     // chatWithAI 正常不会抛(内部已兜底)，但万一抛出也要给用户一条兜底消息，绝不静默装死
-    console.error('[AI] chatWithAI 异常(兜底):', (e as Error).message);
+    logger.error('AI', 'chatWithAI 异常(兜底):', (e as Error).message);
     reply = 'AI 暂时不可用，请稍后再试。';
   } finally {
     stopTyping();
@@ -219,7 +219,7 @@ async function replyDirectly(message: Message, selfId: string): Promise<void> {
     try {
       await message.react(emoji);
     } catch (e) {
-      console.warn(`[AI] 贴表情失败 (${emoji}):`, (e as Error).message);
+      logger.warn('AI', `贴表情失败 (${emoji}):`, (e as Error).message);
     }
   }
 
@@ -251,10 +251,10 @@ async function replyDirectly(message: Message, selfId: string): Promise<void> {
           personaId: activePersona(message.guildId)?.id ?? null,
         });
       } catch (e) {
-        console.warn('[AI] 投递互动评估失败(忽略):', (e as Error).message);
+        logger.warn('AI', '投递互动评估失败(忽略):', (e as Error).message);
       }
     }
   }
-  console.log(`[AI] 回复 ${message.author.username}: ${text.slice(0, 60).replace(/\s+/g, ' ')}...`);
+  logger.info('AI', `回复 ${message.author.username}: ${text.slice(0, 60).replace(/\s+/g, ' ')}...`);
 }
 

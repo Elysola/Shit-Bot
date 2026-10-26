@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getDatabase } from '@/storage';
 import { LEXICAL_WEIGHTS, escapeLike, finalScore, ftsMatchExpr, fuseRelevance, queryTerms, rrfFuse } from './scoring';
 import { touchMemories, type MemoryKind, type MemoryRow, type MemoryScope } from './store';
@@ -86,7 +87,7 @@ function ftsCandidates(terms: string[], f: Filter, limit: number): number[] {
         .all(ftsMatchExpr(terms), ...f.params, limit) as Array<{ id: number }>
     ).map((r) => r.id);
   } catch (e) {
-    console.warn('[Memory] 全文检索失败(改用 LIKE):', (e as Error).message);
+    logger.warn('Memory', '全文检索失败(改用 LIKE):', (e as Error).message);
     return [];
   }
 }
@@ -138,7 +139,7 @@ export async function searchMemories(o: SearchOptions): Promise<{ items: ScoredM
     try {
       vector = new Map((await vectorSearch(o.query, o.scopes, o.guildId ?? null, 40)).map((h) => [h.id, h.score]));
     } catch (e) {
-      console.warn('[Memory] 向量检索失败(只用全文检索):', (e as Error).message);
+      logger.warn('Memory', '向量检索失败(只用全文检索):', (e as Error).message);
     }
   }
   const ids = [...new Set([...lexical.keys(), ...(vector?.keys() ?? [])])];

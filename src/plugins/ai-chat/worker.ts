@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import { isAiSchemaReady } from '@/plugins/ai-chat/db/schema';
@@ -164,7 +165,7 @@ export async function runJob(job: JobRow, now: number = Date.now()): Promise<'do
     const attempts = job.attempts + 1;
     if (e instanceof PermanentJobError || attempts >= MAX_ATTEMPTS) {
       db.run("UPDATE jobs SET status = 'failed', attempts = ?, last_error = ?, updated_at = ? WHERE id = ?", [attempts, msg.slice(0, 1000), now, job.id]);
-      console.warn(`[Jobs] ${job.type}#${job.id} 失败，不再重试: ${msg}`);
+      logger.warn('Jobs', `${job.type}#${job.id} 失败，不再重试: ${msg}`);
       return 'failed';
     }
     const backoff = Math.min(30_000 * Math.pow(2, attempts - 1), 30 * 60_000);
@@ -175,7 +176,7 @@ export async function runJob(job: JobRow, now: number = Date.now()): Promise<'do
       now,
       job.id,
     ]);
-    console.warn(`[Jobs] ${job.type}#${job.id} 出错，${Math.round(backoff / 1000)}s 后重试 (${attempts}/${MAX_ATTEMPTS - 1}): ${msg}`);
+    logger.warn('Jobs', `${job.type}#${job.id} 出错，${Math.round(backoff / 1000)}s 后重试 (${attempts}/${MAX_ATTEMPTS - 1}): ${msg}`);
     return 'retry';
   }
 }
@@ -188,7 +189,7 @@ export function runSchedulers(now: number = Date.now(), force = false): void {
     try {
       s.fn(now);
     } catch (e) {
-      console.warn(`[Jobs] 调度器 ${s.name} 出错(忽略):`, (e as Error).message);
+      logger.warn('Jobs', `调度器 ${s.name} 出错(忽略):`, (e as Error).message);
     }
   }
 }
@@ -217,7 +218,7 @@ async function pump(): Promise<void> {
     if (!job) return;
     running++;
     runJob(job)
-      .catch((e) => console.warn('[Jobs] 执行任务异常:', (e as Error).message))
+      .catch((e) => logger.warn('Jobs', '执行任务异常:', (e as Error).message))
       .finally(() => {
         running--;
         void pump();
@@ -230,7 +231,7 @@ export function startWorker(): void {
   if (!isAiSchemaReady() || timer) return;
   const db = getDatabase();
   const reset = db.run("UPDATE jobs SET status = 'pending', updated_at = ? WHERE status = 'running'", [Date.now()]).changes;
-  if (reset > 0) console.log(`[Jobs] 恢复了 ${reset} 个上次未完成的任务`);
+  if (reset > 0) logger.info('Jobs', `恢复了 ${reset} 个上次未完成的任务`);
   stopped = false;
   timer = setInterval(() => {
     try {
@@ -241,7 +242,7 @@ export function startWorker(): void {
         Date.now() - 7 * 86400_000,
       ]);
     } catch (e) {
-      console.warn('[Jobs] 调度出错(忽略):', (e as Error).message);
+      logger.warn('Jobs', '调度出错(忽略):', (e as Error).message);
     }
     void pump();
   }, 30_000);
@@ -250,7 +251,7 @@ export function startWorker(): void {
     runSchedulers(Date.now(), true);
     void pump();
   }, 5_000);
-  console.log('[Jobs] 后台任务已启动');
+  logger.info('Jobs', '后台任务已启动');
 }
 
 export function stopWorker(): void {

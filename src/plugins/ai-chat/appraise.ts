@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import {
@@ -285,7 +286,7 @@ export function registerAffinityAndMood(): void {
   });
   registerJobHandler('decay', async () => {
     const n = decayAffinities();
-    if (n > 0) console.log(`[Affinity] ${n} 人因长期未互动，好感向中性回落`);
+    if (n > 0) logger.info('Affinity', `${n} 人因长期未互动，好感向中性回落`);
   });
   registerScheduler('affinity-decay', 6 * 3600_000, (now) => {
     enqueueJob('decay', {}, { priority: PRIORITY.maintenance, dedupeKey: `decay:${dayKeyUtc8(now)}` }, now);

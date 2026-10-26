@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 /**
  * 窗口抽取顺带产出的两类信号：群里背后谈论 bot 的态度（旁听好感）、整段聊天的气氛（影响情绪）。
  * 由好感/情绪模块消费；这里定义数据形状和分发入口。
@@ -28,7 +29,7 @@ export function emitBotSentiment(entries: BotSentiment[], ctx: SignalContext): v
   try {
     sentimentSink(entries, ctx);
   } catch (e) {
-    console.warn('[Extract] 处理旁听好感失败(忽略):', (e as Error).message);
+    logger.warn('Extract', '处理旁听好感失败(忽略):', (e as Error).message);
   }
 }
 
@@ -37,6 +38,6 @@ export function emitAtmosphere(atm: Atmosphere, ctx: SignalContext): void {
   try {
     atmosphereSink(atm, ctx);
   } catch (e) {
-    console.warn('[Extract] 处理群聊气氛失败(忽略):', (e as Error).message);
+    logger.warn('Extract', '处理群聊气氛失败(忽略):', (e as Error).message);
   }
 }

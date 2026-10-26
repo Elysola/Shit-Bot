@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import {
   ActivityType,
   ChannelType,
@@ -47,7 +48,7 @@ export function onStoredMessageReaction(fn: ReactionListener): void {
 }
 
 function warn(what: string, e: unknown): void {
-  console.warn(`[Ingest] ${what}失败(忽略):`, (e as Error)?.message ?? e);
+  logger.warn('Ingest', `${what}失败(忽略):`, (e as Error)?.message ?? e);
 }
 
 const TEXT_CHANNEL_TYPES = new Set<ChannelType>([
@@ -299,7 +300,7 @@ async function fetchAllMembers(guild: Guild): Promise<void> {
       upsertUser(user, now, { refreshed: true });
       upsertMember(memberInfoFromDiscord(m), user, now, { refreshed: true });
     }
-    console.log(`[Ingest] 已同步 ${guild.name} 的 ${members.size} 名成员资料`);
+    logger.info('Ingest', `已同步 ${guild.name} 的 ${members.size} 名成员资料`);
   } catch (e) {
     warn(`拉取 ${guild.name} 的成员列表`, e);
   }
@@ -348,7 +349,7 @@ async function runStartupSync(client: Client<true>, privileged: PrivilegedIntent
   const denylist = getAiConfig().memory.observe.channelDenylist;
   // 与入库用同一个判断：子区 → 父频道 → 分类，任何一级在黑名单里都不回望
   const targets = channels.filter((c) => !isChannelDenylisted(c.id, c.parentId ?? null, denylist, channelInfoFromDiscord(c, c.guildId).categoryId));
-  console.log(`[History] ${reason}：开始同步 ${targets.length} 个频道的历史消息`);
+  logger.info('History', `${reason}：开始同步 ${targets.length} 个频道的历史消息`);
   let inserted = 0;
   for (const ch of targets) {
     await enqueueHistoryTask(async () => {
@@ -356,14 +357,14 @@ async function runStartupSync(client: Client<true>, privileged: PrivilegedIntent
         const r = await syncChannel(syncChannelFor(ch, selfId));
         inserted += r.inserted;
         if (r.inserted > 0) {
-          console.log(`[History] #${ch.name}：${r.mode === 'initial' ? '首次回望' : '补缺口'} ${r.pages} 页，新增 ${r.inserted} 条`);
+          logger.info('History', `#${ch.name}：${r.mode === 'initial' ? '首次回望' : '补缺口'} ${r.pages} 页，新增 ${r.inserted} 条`);
         }
       } catch (e) {
         warn(`同步 #${ch.name} 的历史`, e);
       }
     });
   }
-  console.log(`[History] 同步完成，共新增 ${inserted} 条消息`);
+  logger.info('History', `同步完成，共新增 ${inserted} 条消息`);
 }
 
 /** 把入库相关的事件挂到 Discord 客户端上（聊天回复的 messageCreate 处理在 bots/discord.ts） */

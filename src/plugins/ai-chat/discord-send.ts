@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import type { Message, TextChannel } from 'discord.js';
 
 /** 持续显示"正在输入"，返回停止函数 */
@@ -44,7 +45,7 @@ export async function sendAiText(target: Message, text: string, mentionUserIds: 
       if (chunks.length > 1) await new Promise((resolve) => setTimeout(resolve, 500));
     }
   } catch (error) {
-    console.error('Discord AI 回复发送失败:', error);
+    logger.error('AI', 'Discord AI 回复发送失败:', error);
   }
   return sent;
 }

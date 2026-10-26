@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
@@ -39,7 +40,7 @@ function writeDefaultPersona(dir: string): void {
   }
   const file = path.join(dir, `${DEFAULT_PERSONA_ID}.yaml`);
   fs.writeFileSync(file, content, 'utf-8');
-  console.log(`[Persona] 已生成默认人设卡: ${file}`);
+  logger.info('Persona', `已生成默认人设卡: ${file}`);
 }
 
 /**
@@ -60,7 +61,7 @@ export function loadPersonas(): number {
       files = fs.readdirSync(dir).filter((f) => PERSONA_EXT.test(f));
     }
   } catch (e) {
-    console.warn(`[Persona] 读取人设卡目录失败 (${dir}):`, (e as Error).message);
+    logger.warn('Persona', `读取人设卡目录失败 (${dir}):`, (e as Error).message);
   }
 
   const next = new Map<string, PersonaCard>();
@@ -75,14 +76,14 @@ export function loadPersonas(): number {
     const file = path.join(dir, f);
     if (!result.ok) {
       const prev = lastGoodByFile.get(file);
-      console.warn(`[Persona] 人设卡 ${f} 无效：${result.error}${prev ? '，继续使用上一次的有效版本' : ''}`);
+      logger.warn('Persona', `人设卡 ${f} 无效：${result.error}${prev ? '，继续使用上一次的有效版本' : ''}`);
       if (prev && !next.has(prev.id)) next.set(prev.id, prev);
       continue;
     }
     lastGoodByFile.set(file, result.card);
-    for (const w of result.warnings) console.warn(`[Persona] ${f}: ${w}`);
+    for (const w of result.warnings) logger.warn('Persona', `${f}: ${w}`);
     if (next.has(result.card.id)) {
-      console.warn(`[Persona] 人设卡 id "${result.card.id}" 重复（${f}），已忽略`);
+      logger.warn('Persona', `人设卡 id "${result.card.id}" 重复（${f}），已忽略`);
       continue;
     }
     next.set(result.card.id, result.card);
@@ -101,12 +102,12 @@ export function watchPersonas(): void {
       reloadTimer = setTimeout(() => {
         reloadTimer = null;
         const n = loadPersonas();
-        console.log(`[Persona] 人设卡已重新加载（${n} 张）`);
+        logger.info('Persona', `人设卡已重新加载（${n} 张）`);
       }, 500);
     });
-    watcher.on('error', (e) => console.warn('[Persona] 监听人设卡目录出错:', e.message));
+    watcher.on('error', (e) => logger.warn('Persona', '监听人设卡目录出错:', e.message));
   } catch (e) {
-    console.warn(`[Persona] 无法监听人设卡目录 (${dir})，修改后需重启生效:`, (e as Error).message);
+    logger.warn('Persona', `无法监听人设卡目录 (${dir})，修改后需重启生效:`, (e as Error).message);
   }
 }
 
@@ -137,7 +138,7 @@ export function personaForGuild(guildId: string | null | undefined): PersonaCard
   if (assigned) {
     const p = personas.get(assigned);
     if (p) return p;
-    console.warn(`[Persona] 服务器 ${guildId} 分配的人设卡 "${assigned}" 不存在，改用默认`);
+    logger.warn('Persona', `服务器 ${guildId} 分配的人设卡 "${assigned}" 不存在，改用默认`);
   }
   return personas.get(cfg.default) ?? personas.values().next().value ?? null;
 }

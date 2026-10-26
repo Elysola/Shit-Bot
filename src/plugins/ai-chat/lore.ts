@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
@@ -45,7 +46,7 @@ function parseEntries(raw: unknown, guildId: string | null, file: string): LoreE
     const r = e as Record<string, unknown>;
     const content = typeof r.content === 'string' ? r.content.trim() : '';
     if (!content) {
-      console.warn(`[Lore] ${file} 第 ${i + 1} 条缺少 content，已忽略`);
+      logger.warn('Lore', `${file} 第 ${i + 1} 条缺少 content，已忽略`);
       return;
     }
     const keywords = Array.isArray(r.keywords) ? r.keywords.map((k) => String(k).trim()).filter(Boolean) : [];
@@ -74,7 +75,7 @@ export function loadLore(): number {
       const base = f.replace(LORE_EXT, '');
       const guildId = /^\d{15,25}$/.test(base) ? base : base === 'global' ? null : undefined;
       if (guildId === undefined) {
-        console.warn(`[Lore] 文件名 ${f} 既不是服务器 ID 也不是 global，已忽略`);
+        logger.warn('Lore', `文件名 ${f} 既不是服务器 ID 也不是 global，已忽略`);
         continue;
       }
       try {
@@ -85,7 +86,7 @@ export function loadLore(): number {
       } catch (e) {
         // 改坏了：这个文件继续用上一次解析成功的内容，别让群规之类的常驻条目突然消失
         const prev = lastGood.get(path.join(dir, f));
-        console.warn(`[Lore] 解析 ${f} 失败${prev ? '，继续使用上一次的有效版本' : '，已跳过'}:`, (e as Error).message);
+        logger.warn('Lore', `解析 ${f} 失败${prev ? '，继续使用上一次的有效版本' : '，已跳过'}:`, (e as Error).message);
         if (prev) next.push(...prev);
       }
     }
@@ -103,12 +104,12 @@ export function watchLore(): void {
       if (reloadTimer) clearTimeout(reloadTimer);
       reloadTimer = setTimeout(() => {
         reloadTimer = null;
-        console.log(`[Lore] lorebook 已重新加载（${loadLore()} 条）`);
+        logger.info('Lore', `lorebook 已重新加载（${loadLore()} 条）`);
       }, 500);
     });
-    watcher.on('error', (e) => console.warn('[Lore] 监听 lorebook 目录出错:', e.message));
+    watcher.on('error', (e) => logger.warn('Lore', '监听 lorebook 目录出错:', e.message));
   } catch (e) {
-    console.warn(`[Lore] 无法监听 lorebook 目录 (${dir})，修改后需重启生效:`, (e as Error).message);
+    logger.warn('Lore', `无法监听 lorebook 目录 (${dir})，修改后需重启生效:`, (e as Error).message);
   }
 }
 

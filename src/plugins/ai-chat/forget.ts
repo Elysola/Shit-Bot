@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getDatabase } from '@/storage';
 import { bumpForgetEpoch, recordForgotten } from './forget-guard';
 import { forgetIdentityCache } from './identity';
@@ -379,7 +380,7 @@ export function forgetUser(userId: string, opts: { keepOptOut?: boolean; now?: n
     try {
       report.vectors = deleteVectorsOf('memory', memoryIds);
     } catch (e) {
-      console.warn('[Forget] 删除向量失败（后台任务会再清理）:', (e as Error).message);
+      logger.warn('Forget', '删除向量失败（后台任务会再清理）:', (e as Error).message);
     }
     try {
       // 全文索引合并段，物理上去掉已删除消息的词条；WAL 里的旧页一并落盘截断
@@ -396,8 +397,8 @@ export function forgetUser(userId: string, opts: { keepOptOut?: boolean; now?: n
   forgetIdentityCache(userId);
   forgetPresence(userId);
   clearQueryCache();
-  console.log(
-    `[Forget] 已删除用户 ${userId} 的数据：消息 ${report.messages}（bot 回复 ${report.botReplies}）、记忆 ${report.memories}、向量 ${report.vectors}、其它 ${report.rows} 行；匿名化 ${report.scrubbedMessages} 条别人的消息`
+  logger.info(
+    'Forget', `已删除用户 ${userId} 的数据：消息 ${report.messages}（bot 回复 ${report.botReplies}）、记忆 ${report.memories}、向量 ${report.vectors}、其它 ${report.rows} 行；匿名化 ${report.scrubbedMessages} 条别人的消息`
   );
   return report;
 }

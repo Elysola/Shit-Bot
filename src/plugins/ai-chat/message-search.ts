@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getDatabase } from '@/storage';
 import { getChannelName } from './channels';
 import { escapeLike, ftsMatchExpr, queryTerms } from '@/plugins/ai-chat/memory/scoring';
@@ -106,7 +107,7 @@ export function searchMessages(q: MessageQuery): MessagePage {
         .all(ftsMatchExpr(terms.fts), ...f.params) as Array<{ id: number }>;
       ftsRows.forEach((r, i) => scores.set(r.id, (scores.get(r.id) ?? 0) + 2 - i / 500));
     } catch (e) {
-      console.warn('[Memory] 消息全文检索失败(改用 LIKE):', (e as Error).message);
+      logger.warn('Memory', '消息全文检索失败(改用 LIKE):', (e as Error).message);
     }
   }
   if (terms.like.length) {

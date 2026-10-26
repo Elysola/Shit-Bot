@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getChannel, updateChannelSync, upsertChannel, type ChannelInfo } from './channels';
 import { deleteMeta, getMeta, setMeta } from '@/plugins/ai-chat/db/meta';
@@ -108,7 +109,7 @@ function ingestPage(page: FetchedPage, startedAt: number): PageStats {
     try {
       res = ingestMessage(m);
     } catch (e) {
-      console.warn(`[History] 写入消息 ${m.messageId} 失败(跳过):`, (e as Error).message);
+      logger.warn('History', `写入消息 ${m.messageId} 失败(跳过):`, (e as Error).message);
       continue;
     }
     if (res === 'inserted') stats.inserted++;
@@ -211,7 +212,7 @@ export async function syncChannel(ch: SyncChannel, opts: SyncOptions = {}): Prom
   }
   if (synced && !connected) {
     gapUnclosed = true;
-    console.warn(`[History] 频道 ${ch.info.name ?? channelId} 停机期间消息过多，翻了 ${pages} 页仍未接上已知历史，剩下的下次继续补`);
+    logger.warn('History', `频道 ${ch.info.name ?? channelId} 停机期间消息过多，翻了 ${pages} 页仍未接上已知历史，剩下的下次继续补`);
   }
 
   // ①b 上次翻页数到上限、记下了翻到哪里的缺口：顶部接上之后，从 cursor 继续往前补到 floor

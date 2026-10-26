@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { Database } from 'bun:sqlite';
 import { getAiConfig } from '@/plugins/ai-chat/config';
 import { getDatabase } from '@/storage';
@@ -42,9 +43,9 @@ export function configureSqliteRuntime(): void {
   if (!p || process.platform !== 'darwin') return;
   try {
     Database.setCustomSQLite(p);
-    console.log(`[Vector] 使用自定义 SQLite: ${p}`);
+    logger.info('Vector', `使用自定义 SQLite: ${p}`);
   } catch (e) {
-    console.warn('[Vector] 设置自定义 SQLite 失败:', (e as Error).message);
+    logger.warn('Vector', '设置自定义 SQLite 失败:', (e as Error).message);
   }
 }
 
@@ -58,17 +59,17 @@ async function tryLoadSqliteVec(db: Database): Promise<string | null> {
       const mod = (await import('sqlite-vec')) as { getLoadablePath: () => string };
       candidates.push(mod.getLoadablePath());
     } catch (e) {
-      console.warn('[Vector] 找不到 sqlite-vec 扩展包:', (e as Error).message);
+      logger.warn('Vector', '找不到 sqlite-vec 扩展包:', (e as Error).message);
     }
   }
   for (const path of candidates) {
     try {
       db.loadExtension(path);
       const v = (db.query('SELECT vec_version() AS v').get() as { v: string }).v;
-      console.log(`[Vector] sqlite-vec ${v} 已加载`);
+      logger.info('Vector', `sqlite-vec ${v} 已加载`);
       return path;
     } catch (e) {
-      console.warn(`[Vector] 加载 sqlite-vec 失败 (${path}):`, (e as Error).message);
+      logger.warn('Vector', `加载 sqlite-vec 失败 (${path}):`, (e as Error).message);
     }
   }
   return null;
@@ -90,7 +91,7 @@ function resetForNewModel(model: string, reason: string): void {
   deleteMeta('embedding.dims');
   setMeta('embedding.model', model);
   queryCache.clear();
-  console.log(`[Vector] ${reason}：清除 ${n} 条旧向量，后台将重新计算`);
+  logger.info('Vector', `${reason}：清除 ${n} 条旧向量，后台将重新计算`);
 }
 
 /**
@@ -102,7 +103,7 @@ export async function initVectors(): Promise<void> {
   initialized = false;
   queryCache.clear();
   if (!isAiSchemaReady() || !embeddingEnabled()) {
-    if (isAiSchemaReady()) console.log('[Vector] 未配置向量模型，记忆检索只用全文检索');
+    if (isAiSchemaReady()) logger.info('Vector', '未配置向量模型，记忆检索只用全文检索');
     return;
   }
   const cfg = getAiConfig();
@@ -112,7 +113,7 @@ export async function initVectors(): Promise<void> {
   if (cfg.vector.backend !== 'js') {
     path = await tryLoadSqliteVec(db);
     if (path) kind = 'sqlite';
-    else if (cfg.vector.backend === 'sqlite') console.warn('[Vector] 配置要求 sqlite 后端但扩展加载失败，改用 js 后端');
+    else if (cfg.vector.backend === 'sqlite') logger.warn('Vector', '配置要求 sqlite 后端但扩展加载失败，改用 js 后端');
   }
   // 扩展已在当前连接上加载过，store 只需在连接被替换后重新加载
   setVectorBackend(kind, path, kind === 'sqlite');
@@ -136,14 +137,14 @@ export async function initVectors(): Promise<void> {
     const total = (db.query('SELECT COUNT(*) AS c FROM vectors WHERE model = ? AND dims = ?').get(model, dims) as { c: number }).c;
     // 上次用的是 js 后端：期间重算过的向量不会同步到二值索引，条数对得上也可能是旧码，一律重建
     const fromJs = getMeta('vector.backend') === 'js';
-    if (fromJs || binIndexCount(dims) !== total) console.log(`[Vector] 二值索引已重建（${rebuildBinIndex(model, dims)} 条）`);
+    if (fromJs || binIndexCount(dims) !== total) logger.info('Vector', `二值索引已重建（${rebuildBinIndex(model, dims)} 条）`);
   }
 
   setMeta('vector.backend', kind);
   setVectorSearch(memoryVectorSearch);
   initialized = true;
   const pending = pendingCount();
-  console.log(`[Vector] 后端：${kind === 'sqlite' ? 'sqlite-vec（数据库内计算）' : 'JS'}；模型 ${model}${dims ? `（${dims} 维）` : ''}；待向量化记忆 ${pending} 条`);
+  logger.info('Vector', `后端：${kind === 'sqlite' ? 'sqlite-vec（数据库内计算）' : 'JS'}；模型 ${model}${dims ? `（${dims} 维）` : ''}；待向量化记忆 ${pending} 条`);
 }
 
 export function vectorsReady(): boolean {
@@ -286,7 +287,7 @@ export function registerVectorJobs(): void {
       total += n;
       if (n < EMBED_BATCH) break;
     }
-    if (total > 0) console.log(`[Vector] 已向量化 ${total} 条记忆（剩余 ${pendingCount()} 条）`);
+    if (total > 0) logger.info('Vector', `已向量化 ${total} 条记忆（剩余 ${pendingCount()} 条）`);
   });
   registerScheduler('embed', 60_000, (now) => {
     if (vectorsReady() && pendingCount() > 0) enqueueJob('embed', {}, { priority: PRIORITY.embed, dedupeKey: 'embed' }, now);

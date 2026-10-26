@@ -1,3 +1,4 @@
+import { logger } from '@/logger';
 import { getAiConfig } from './config';
 import { getDatabase } from '@/storage';
 import { isAiSchemaReady } from '@/plugins/ai-chat/db/schema';
@@ -176,7 +177,7 @@ export async function chatCompletion(req: ChatRequest): Promise<ChatCompletionRe
       lastErr = e;
       const wait = Math.min(err.retryAfterMs ?? retryBaseMs * attempt, 10000);
       const reason = isTimeout ? '请求超时' : err.message;
-      console.warn(`${logPrefix(req.purpose)} 瞬时错误，${wait}ms 后重试 ${attempt}/${attemptCap - 1}: ${reason}`);
+      logger.warn('AI', `${logPrefix(req.purpose)} 瞬时错误，${wait}ms 后重试 ${attempt}/${attemptCap - 1}: ${reason}`);
       await new Promise((r) => setTimeout(r, wait));
     } finally {
       clearTimeout(timeout);
@@ -210,7 +211,7 @@ export function recordUsage(
       [dayKeyUtc8(now), purpose, model, nonNegInt(usage?.prompt_tokens), nonNegInt(usage?.completion_tokens)]
     );
   } catch (e) {
-    console.warn('[AI] 记录 token 用量失败(忽略):', (e as Error).message);
+    logger.warn('AI', '记录 token 用量失败(忽略):', (e as Error).message);
   }
 }
 
@@ -280,7 +281,7 @@ export async function jsonCompletion<T>(req: JsonRequest<T>): Promise<T> {
         useJsonMode && err.status === 400 && /response_format|json_object/i.test(`${err.body || ''} ${err.message}`);
       if (!rejectedJsonMode) throw e;
       jsonModeUnsupported.add(key);
-      console.warn(`${logPrefix(base.purpose)} 网关不支持 response_format，改为普通输出后解析 JSON`);
+      logger.warn('AI', `${logPrefix(base.purpose)} 网关不支持 response_format，改为普通输出后解析 JSON`);
       data = await chatCompletion({ ...base, messages, toolChoice: false });
     }
 
@@ -290,7 +291,7 @@ export async function jsonCompletion<T>(req: JsonRequest<T>): Promise<T> {
     if (value !== null) return value;
 
     if (round < repairAttempts) {
-      console.warn(`${logPrefix(base.purpose)} 输出不是合格的 JSON，要求重新生成`);
+      logger.warn('AI', `${logPrefix(base.purpose)} 输出不是合格的 JSON，要求重新生成`);
       messages.push({ role: 'assistant', content: text || '（空）' });
       messages.push({
         role: 'user',
